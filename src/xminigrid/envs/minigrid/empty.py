@@ -4,12 +4,14 @@ import jax
 import jax.numpy as jnp
 from flax import struct
 
+from ...core.actions import take_action
 from ...core.constants import TILES_REGISTRY, Colors, Tiles
-from ...core.goals import AgentOnTileGoal
+from ...core.goals import AgentOnTileGoal, check_goal
 from ...core.grid import room, sample_coordinates, sample_direction
-from ...core.rules import EmptyRule
-from ...environment import Environment, EnvParams
-from ...types import AgentState, EnvCarry, State
+from ...core.observation import transparent_field_of_view, transparent_field_of_view_hidden_goal
+from ...core.rules import EmptyRule, check_rule
+from ...environment import Environment, EnvParams, EnvParamsT
+from ...types import AgentState, EnvCarry, EnvCarryT, IntOrArray, State, StepType, TimeStep
 
 # goals and rules are hardcoded for minigrid envs
 _goal_encoding = AgentOnTileGoal(tile=TILES_REGISTRY[Tiles.GOAL, Colors.GREEN]).encode()
@@ -83,6 +85,53 @@ class EmptyGoalRandom(Environment[EmptyGoalRandomEnvParams, EnvCarry]):
             carry=EnvCarry(),
         )
         return state
+
+    def reset(self, params: EmptyGoalRandomEnvParams, key: jax.Array) -> TimeStep[EnvCarry]:
+        state = self._generate_problem(params, key)
+        timestep = TimeStep(
+            state=state,
+            step_type=StepType.FIRST,
+            reward=jnp.asarray(0.0),
+            discount=jnp.asarray(1.0),
+            observation=transparent_field_of_view_hidden_goal(
+                state.grid, state.agent, params.view_size, params.view_size
+            ),
+        )
+        return timestep
+
+    # Why timestep + state at once, and not like in Jumanji? To be able to do autoresets in gym and envpools styles
+    def step(self, params: EnvParamsT, timestep: TimeStep[EnvCarryT], action: IntOrArray) -> TimeStep[EnvCarryT]:
+        new_grid, new_agent, changed_position = take_action(timestep.state.grid, timestep.state.agent, action)
+        new_grid, new_agent = check_rule(timestep.state.rule_encoding, new_grid, new_agent, action, changed_position)
+
+        new_state = timestep.state.replace(
+            grid=new_grid,
+            agent=new_agent,
+            step_num=timestep.state.step_num + 1,
+        )
+        new_observation = transparent_field_of_view_hidden_goal(
+            new_state.grid, new_state.agent, params.view_size, params.view_size
+        )
+
+        # checking for termination or truncation, choosing step type
+        terminated = check_goal(new_state.goal_encoding, new_state.grid, new_state.agent, action, changed_position)
+
+        assert params.max_steps is not None
+        truncated = jnp.equal(new_state.step_num, params.max_steps)
+
+        reward = jax.lax.select(terminated, 1.0 - 0.9 * (new_state.step_num / params.max_steps), 0.0)
+
+        step_type = jax.lax.select(terminated | truncated, StepType.LAST, StepType.MID)
+        discount = jax.lax.select(terminated, jnp.asarray(0.0), jnp.asarray(1.0))
+
+        timestep = TimeStep(
+            state=new_state,
+            step_type=step_type,
+            reward=reward,
+            discount=discount,
+            observation=new_observation,
+        )
+        return timestep
 
 
 class EmptyRandom(Environment[EnvParams, EnvCarry]):

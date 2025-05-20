@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp
 
 from ..types import AgentState, GridState
-from .constants import Tiles
+from .constants import TILES_REGISTRY, Colors, Tiles
 from .grid import align_with_up, check_see_behind
 
 
@@ -44,6 +44,25 @@ def transparent_field_of_view(grid: GridState, agent: AgentState, height: int, w
     # We do this by placing the carried object at the agent's position
     # in the agent's partially observable view
     # fov_grid = fov_grid.at[height - 1, width // 2].set(agent.pocket)
+
+    return fov_grid
+
+
+def transparent_field_of_view_hidden_goal(grid: GridState, agent: AgentState, height: int, width: int) -> jax.Array:
+    fov_grid = crop_field_of_view(grid, agent, height, width)
+    fov_grid = align_with_up(fov_grid, agent.direction)
+
+    # TODO: should we even do this? Agent with good memory can remember what he picked up.
+    # WARN: this can overwrite tile the agent is on, GOAL for example.
+    # https://github.com/Farama-Foundation/Minigrid/blob/463f07f20ff5cc2843d4b7cdf12c54a73b7d4d1c/minigrid/minigrid_env.py#L618 # noqa
+    # Make it so the agent sees what it's carrying
+    # We do this by placing the carried object at the agent's position
+    # in the agent's partially observable view
+    # fov_grid = fov_grid.at[height - 1, width // 2].set(agent.pocket)
+
+    goal_mask = fov_grid[:, :, 0] == Tiles.GOAL
+    floor_tile = TILES_REGISTRY[Tiles.FLOOR, Colors.BLACK]
+    fov_grid = jnp.where(goal_mask[..., None], floor_tile, fov_grid)
 
     return fov_grid
 
