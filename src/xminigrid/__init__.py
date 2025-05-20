@@ -346,6 +346,28 @@ register(
     width=16,
 )
 
+# EmptyGoalRandom
+register(
+    id="MiniGrid-EmptyGoalRandom-5x5",
+    entry_point="xminigrid.envs.minigrid.empty:EmptyGoalRandom",
+    height=5,
+    width=5,
+)
+
+register(
+    id="MiniGrid-EmptyGoalRandom-8x8",
+    entry_point="xminigrid.envs.minigrid.empty:EmptyGoalRandom",
+    height=8,
+    width=8,
+)
+
+register(
+    id="MiniGrid-EmptyGoalRandom-16x16",
+    entry_point="xminigrid.envs.minigrid.empty:EmptyGoalRandom",
+    height=16,
+    width=16,
+)
+
 # FourRooms
 register(
     id="MiniGrid-FourRooms",
