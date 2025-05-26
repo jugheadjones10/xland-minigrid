@@ -355,6 +355,14 @@ register(
 )
 
 register(
+    id="MiniGrid-EmptyGoalRandom-6x6",
+    entry_point="xminigrid.envs.minigrid.empty:EmptyGoalRandom",
+    height=6,
+    width=6,
+)
+
+
+register(
     id="MiniGrid-EmptyGoalRandom-8x8",
     entry_point="xminigrid.envs.minigrid.empty:EmptyGoalRandom",
     height=8,
