@@ -12,7 +12,7 @@ from flax.linen.dtypes import promote_dtype
 from flax.linen.initializers import glorot_normal, orthogonal, zeros_init
 from flax.typing import Dtype
 
-from xminigrid.core.constants import NUM_COLORS, NUM_TILES
+from xminigrid.envs.pushworld.constants import NUM_TILES
 
 
 class GRU(nn.Module):
@@ -80,16 +80,9 @@ class EmbeddingEncoder(nn.Module):
     @nn.compact
     def __call__(self, img):
         entity_emb = nn.Embed(NUM_TILES, self.emb_dim, self.dtype, self.param_dtype)
-        color_emb = nn.Embed(NUM_COLORS, self.emb_dim, self.dtype, self.param_dtype)
 
         # [..., channels]
-        img_emb = jnp.concatenate(
-            [
-                entity_emb(img[..., 0]),
-                color_emb(img[..., 1]),
-            ],
-            axis=-1,
-        )
+        img_emb = entity_emb(img[..., 0])
         return img_emb
 
 
@@ -195,7 +188,6 @@ class ActorCriticRNN(nn.Module):
                 ]
             )
         action_encoder = nn.Embed(self.num_actions, self.action_emb_dim)
-        direction_encoder = nn.Dense(self.action_emb_dim, dtype=self.dtype, param_dtype=self.param_dtype)
 
         rnn_core = BatchedRNNModel(
             self.rnn_hidden_dim, self.rnn_num_layers, dtype=self.dtype, param_dtype=self.param_dtype
@@ -223,11 +215,10 @@ class ActorCriticRNN(nn.Module):
 
         # [batch_size, seq_len, ...]
         obs_emb = img_encoder(inputs["obs_img"].astype(jnp.int32)).reshape(B, S, -1)
-        dir_emb = direction_encoder(inputs["obs_dir"])
         act_emb = action_encoder(inputs["prev_action"])
 
-        # [batch_size, seq_len, hidden_dim + 2 * act_emb_dim + 1]
-        out = jnp.concatenate([obs_emb, dir_emb, act_emb, inputs["prev_reward"][..., None]], axis=-1)
+        # [batch_size, seq_len, hidden_dim + act_emb_dim + 1]
+        out = jnp.concatenate([obs_emb, act_emb, inputs["prev_reward"][..., None]], axis=-1)
 
         # core networks
         out, new_hidden = rnn_core(out, hidden)

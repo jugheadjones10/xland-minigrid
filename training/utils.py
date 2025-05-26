@@ -107,9 +107,9 @@ def ppo_update_networks(
 # for evaluation (evaluate for N consecutive episodes, sum rewards)
 # N=1 single task, N>1 for meta-RL
 class RolloutStats(struct.PyTreeNode):
-    reward: jax.Array = jnp.asarray(0.0)
-    length: jax.Array = jnp.asarray(0)
-    episodes: jax.Array = jnp.asarray(0)
+    reward: jax.Array = struct.field(default_factory=lambda: jnp.asarray(0.0))
+    length: jax.Array = struct.field(default_factory=lambda: jnp.asarray(0))
+    episodes: jax.Array = struct.field(default_factory=lambda: jnp.asarray(0))
 
 
 def rollout(

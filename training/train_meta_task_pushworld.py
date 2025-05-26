@@ -18,13 +18,13 @@ import wandb
 from flax.jax_utils import replicate, unreplicate
 from flax.training import orbax_utils
 from flax.training.train_state import TrainState
-from nn import ActorCriticRNN
-from utils import Transition, calculate_gae, ppo_update_networks, rollout
+from nn_pushworld import ActorCriticRNN
+from utils_pushworld import Transition, calculate_gae, ppo_update_networks, rollout
 
-import xminigrid
-from xminigrid.benchmarks import Benchmark
-from xminigrid.environment import Environment, EnvParams
-from xminigrid.wrappers import DirectionObservationWrapper, GymAutoResetWrapper
+import xminigrid.envs.pushworld as pushworld
+from xminigrid.envs.pushworld.benchmarks import Benchmark
+from xminigrid.envs.pushworld.environment import Environment, EnvParams, EnvParamsT, PushWorldEnvironment
+from xminigrid.envs.pushworld.wrappers import GymAutoResetWrapper
 
 # this will be default in new jax versions anyway
 jax.config.update("jax_threefry_partitionable", True)
@@ -37,7 +37,7 @@ class TrainConfig:
     name: str = "meta-task-ppo"
     # env_id: str = "XLand-MiniGrid-R1-9x9"
     env_id: str = "MiniGrid-EmptyGoalRandom-5x5"
-    benchmark_id: str = "trivial-1m"
+    benchmark_id: str = "level0_mini"
     img_obs: bool = False
     # agent
     obs_emb_dim: int = 16
@@ -92,18 +92,20 @@ def make_states(config: TrainConfig):
     # if "XLand" not in config.env_id:
     #     raise ValueError("Only meta-task environments are supported.")
 
-    env, env_params = xminigrid.make(config.env_id)
-    env = GymAutoResetWrapper(env)
-    env = DirectionObservationWrapper(env)
+    env = PushWorldEnvironment()
+    env_params = env.default_params()
 
+    env = GymAutoResetWrapper(env)
     # enabling image observations if needed
     if config.img_obs:
-        from xminigrid.experimental.img_obs import RGBImgObservationWrapper
+        pass
+        # from xminigrid.experimental.img_obs import RGBImgObservationWrapper
 
-        env = RGBImgObservationWrapper(env)
+        # Need to add a PushWorld version for this
+        # env = RGBImgObservationWrapper(env)
 
     # loading benchmark
-    # benchmark = xminigrid.load_benchmark(config.benchmark_id)
+    benchmark = pushworld.load_benchmark(config.benchmark_id)
 
     # set up training state
     rng = jax.random.key(config.train_seed)
@@ -123,8 +125,8 @@ def make_states(config: TrainConfig):
     shapes = env.observation_shape(env_params)
 
     init_obs = {
-        "obs_img": jnp.zeros((config.num_envs_per_device, 1, *shapes["img"])),
-        "obs_dir": jnp.zeros((config.num_envs_per_device, 1, shapes["direction"])),
+        # We add single channel dimension to end of obs_img
+        "obs_img": jnp.zeros((config.num_envs_per_device, 1, *shapes, 1)),
         "prev_action": jnp.zeros((config.num_envs_per_device, 1), dtype=jnp.int32),
         "prev_reward": jnp.zeros((config.num_envs_per_device, 1)),
     }
@@ -137,12 +139,13 @@ def make_states(config: TrainConfig):
     )
     train_state = TrainState.create(apply_fn=network.apply, params=network_params, tx=tx)
 
-    return rng, env, env_params, init_hstate, train_state
+    return rng, env, env_params, benchmark, init_hstate, train_state
 
 
 def make_train(
     env: Environment,
     env_params: EnvParams,
+    benchmark: Benchmark,
     config: TrainConfig,
 ):
     @partial(jax.pmap, axis_name="devices")
@@ -159,14 +162,12 @@ def make_train(
 
             # INIT ENV
             rng, _rng1, _rng2 = jax.random.split(rng, num=3)
-            # ruleset_rng = jax.random.split(rng, num=config.num_envs_per_device)
-            puzzle_rng = jax.random.split(rng, num=config.num_envs_per_device)
-            reset_rng = jax.random.split(rng, num=config.num_envs_per_device)
+            puzzle_rng = jax.random.split(_rng1, num=config.num_envs_per_device)
+            reset_rng = jax.random.split(_rng2, num=config.num_envs_per_device)
 
-            # sample rulesets for this meta update
-            # rulesets = jax.vmap(benchmark.sample_ruleset)(ruleset_rng)
-            # meta_env_params = env_params.replace(ruleset=rulesets)
-            meta_env_params = env_params.replace(puzzle_key=puzzle_rng)
+            # sample puzzles for this meta update
+            puzzles = jax.vmap(benchmark.sample_puzzle, in_axes=(0, None))(puzzle_rng, "train")
+            meta_env_params = env_params.replace(puzzle=puzzles)
 
             timestep = jax.vmap(env.reset, in_axes=(0, 0))(meta_env_params, reset_rng)
             # jax.debug.print("grid state: {timestep}", timestep=timestep.state.grid)
@@ -186,8 +187,8 @@ def make_train(
                         train_state.params,
                         {
                             # [batch_size, seq_len=1, ...]
-                            "obs_img": prev_timestep.observation["img"][:, None],
-                            "obs_dir": prev_timestep.observation["direction"][:, None],
+                            # We add single channel dimension to end of obs_img
+                            "obs_img": prev_timestep.observation[:, None, ..., None],
                             "prev_action": prev_action[:, None],
                             "prev_reward": prev_reward[:, None],
                         },
@@ -206,8 +207,7 @@ def make_train(
                         value=value,
                         reward=timestep.reward,
                         log_prob=log_prob,
-                        obs=prev_timestep.observation["img"],
-                        dir=prev_timestep.observation["direction"],
+                        obs=prev_timestep.observation[..., None],
                         prev_action=prev_action,
                         prev_reward=prev_reward,
                     )
@@ -224,8 +224,8 @@ def make_train(
                 _, last_val, _ = train_state.apply_fn(
                     train_state.params,
                     {
-                        "obs_img": timestep.observation["img"][:, None],
-                        "obs_dir": timestep.observation["direction"][:, None],
+                        # We add single channel dimension to end of obs_img
+                        "obs_img": timestep.observation[:, None, ..., None],
                         "prev_action": prev_action[:, None],
                         "prev_reward": prev_reward[:, None],
                     },
@@ -288,12 +288,11 @@ def make_train(
 
             # EVALUATE AGENT
             eval_puzzle_rng, eval_reset_rng = jax.random.split(jax.random.key(config.eval_seed))
-            # eval_ruleset_rng = jax.random.split(eval_ruleset_rng, num=config.eval_num_envs_per_device)
             eval_puzzle_rng = jax.random.split(eval_puzzle_rng, num=config.eval_num_envs_per_device)
             eval_reset_rng = jax.random.split(eval_reset_rng, num=config.eval_num_envs_per_device)
 
-            # eval_ruleset = jax.vmap(benchmark.sample_ruleset)(eval_ruleset_rng)
-            eval_env_params = env_params.replace(puzzle_key=eval_puzzle_rng)
+            eval_puzzles = jax.vmap(benchmark.sample_puzzle, in_axes=(0, None))(eval_puzzle_rng, "test")
+            eval_env_params = env_params.replace(puzzle=eval_puzzles)
 
             eval_stats = jax.vmap(rollout, in_axes=(0, None, 0, None, None, None))(
                 eval_reset_rng,
@@ -341,7 +340,7 @@ def train(config: TrainConfig):
     if config.checkpoint_path is not None and os.path.exists(config.checkpoint_path):
         shutil.rmtree(config.checkpoint_path)
 
-    rng, env, env_params, init_hstate, train_state = make_states(config)
+    rng, env, env_params, benchmark, init_hstate, train_state = make_states(config)
     # replicating args across devices
     rng = jax.random.split(rng, num=jax.local_device_count())
     train_state = replicate(train_state, jax.local_devices())
@@ -349,7 +348,7 @@ def train(config: TrainConfig):
 
     print("Compiling...")
     t = time.time()
-    train_fn = make_train(env, env_params, config)
+    train_fn = make_train(env, env_params, benchmark, config)
     train_fn = train_fn.lower(rng, train_state, init_hstate).compile()
     elapsed_time = time.time() - t
     print(f"Done in {elapsed_time:.2f}s.")

@@ -14,12 +14,16 @@ import pyrallis
 import wandb
 from flax.jax_utils import replicate, unreplicate
 from flax.training.train_state import TrainState
-from nn import ActorCriticRNN
-from utils import Transition, calculate_gae, ppo_update_networks, rollout
+from nn_pushworld import ActorCriticRNN
+from utils_pushworld import Transition, calculate_gae, ppo_update_networks, rollout
 
-import xminigrid
-from xminigrid.environment import Environment, EnvParams
-from xminigrid.wrappers import DirectionObservationWrapper, GymAutoResetWrapper
+# import xminigrid
+# from xminigrid.environment import Environment, EnvParams
+# from xminigrid.wrappers import DirectionObservationWrapper, GymAutoResetWrapper
+import xminigrid.envs.pushworld as pushworld
+from xminigrid.envs.pushworld.benchmarks import Benchmark
+from xminigrid.envs.pushworld.environment import Environment, EnvParams, EnvParamsT, PushWorldEnvironment
+from xminigrid.envs.pushworld.wrappers import GymAutoResetWrapper
 
 # this will be default in new jax versions anyway
 jax.config.update("jax_threefry_partitionable", True)
@@ -31,7 +35,7 @@ class TrainConfig:
     group: str = "default"
     name: str = "single-task-ppo"
     env_id: str = "MiniGrid-Empty-6x6"
-    benchmark_id: Optional[str] = None
+    benchmark_id: str = "level0_mini"
     ruleset_id: Optional[int] = None
     img_obs: bool = False
     # agent
@@ -56,6 +60,7 @@ class TrainConfig:
     max_grad_norm: float = 0.5
     eval_episodes: int = 80
     seed: int = 42
+    eval_seed: int = 42
 
     def __post_init__(self):
         num_devices = jax.local_device_count()
@@ -75,22 +80,18 @@ def make_states(config: TrainConfig):
         return config.lr * frac
 
     # setup environment
-    env, env_params = xminigrid.make(config.env_id)
-    env = GymAutoResetWrapper(env)
-    env = DirectionObservationWrapper(env)
+    env = PushWorldEnvironment()
+    env_params = env.default_params()
 
-    # for single-task XLand environments
-    if config.benchmark_id is not None:
-        assert "XLand-MiniGrid" in config.env_id, "Benchmarks should be used only with XLand environments."
-        assert config.ruleset_id is not None, "Ruleset ID should be specified for benchmarks usage."
-        benchmark = xminigrid.load_benchmark(config.benchmark_id)
-        env_params = env_params.replace(ruleset=benchmark.get_ruleset(config.ruleset_id))
+    env = GymAutoResetWrapper(env)
+
+    benchmark = pushworld.load_benchmark(config.benchmark_id)
 
     # enabling image observations if needed
-    if config.img_obs:
-        from xminigrid.experimental.img_obs import RGBImgObservationWrapper
+    # if config.img_obs:
+    #     from xminigrid.experimental.img_obs import RGBImgObservationWrapper
 
-        env = RGBImgObservationWrapper(env)
+    #     env = RGBImgObservationWrapper(env)
 
     # setup training state
     rng = jax.random.key(config.seed)
@@ -111,8 +112,7 @@ def make_states(config: TrainConfig):
     shapes = env.observation_shape(env_params)
 
     init_obs = {
-        "obs_img": jnp.zeros((config.num_envs_per_device, 1, *shapes["img"])),
-        "obs_dir": jnp.zeros((config.num_envs_per_device, 1, shapes["direction"])),
+        "obs_img": jnp.zeros((config.num_envs_per_device, 1, *shapes, 1)),
         "prev_action": jnp.zeros((config.num_envs_per_device, 1), dtype=jnp.int32),
         "prev_reward": jnp.zeros((config.num_envs_per_device, 1)),
     }
@@ -125,12 +125,13 @@ def make_states(config: TrainConfig):
     )
     train_state = TrainState.create(apply_fn=network.apply, params=network_params, tx=tx)
 
-    return rng, env, env_params, init_hstate, train_state
+    return rng, env, env_params, benchmark, init_hstate, train_state
 
 
 def make_train(
     env: Environment,
     env_params: EnvParams,
+    benchmark: Benchmark,
     config: TrainConfig,
 ):
     @partial(jax.pmap, axis_name="devices")
@@ -140,10 +141,14 @@ def make_train(
         init_hstate: jax.Array,
     ):
         # INIT ENV
-        rng, _rng = jax.random.split(rng)
-        reset_rng = jax.random.split(_rng, config.num_envs_per_device)
+        rng, _rng1, _rng2 = jax.random.split(rng, num=3)
+        puzzle_rng = jax.random.split(_rng1, num=config.num_envs_per_device)
+        reset_rng = jax.random.split(_rng2, num=config.num_envs_per_device)
 
-        timestep = jax.vmap(env.reset, in_axes=(None, 0))(env_params, reset_rng)
+        puzzles = jax.vmap(benchmark.sample_puzzle, in_axes=(0, None))(puzzle_rng, "train")
+        puzzles_env_params = env_params.replace(puzzle=puzzles)
+
+        timestep = jax.vmap(env.reset, in_axes=(0, 0))(puzzles_env_params, reset_rng)
         prev_action = jnp.zeros(config.num_envs_per_device, dtype=jnp.int32)
         prev_reward = jnp.zeros(config.num_envs_per_device)
 
@@ -170,8 +175,7 @@ def make_train(
                     train_state.params,
                     {
                         # [batch_size, seq_len=1, ...]
-                        "obs_img": prev_timestep.observation["img"][:, None],
-                        "obs_dir": prev_timestep.observation["direction"][:, None],
+                        "obs_img": prev_timestep.observation[:, None, ..., None],
                         "prev_action": prev_action[:, None],
                         "prev_reward": prev_reward[:, None],
                     },
@@ -182,15 +186,14 @@ def make_train(
                 action, value, log_prob = action.squeeze(1), value.squeeze(1), log_prob.squeeze(1)
 
                 # STEP ENV
-                timestep = jax.vmap(env.step, in_axes=(None, 0, 0))(env_params, prev_timestep, action)
+                timestep = jax.vmap(env.step, in_axes=0)(env_params, prev_timestep, action)
                 transition = Transition(
                     done=timestep.last(),
                     action=action,
                     value=value,
                     reward=timestep.reward,
                     log_prob=log_prob,
-                    obs=prev_timestep.observation["img"],
-                    dir=prev_timestep.observation["direction"],
+                    obs=prev_timestep.observation[..., None],
                     prev_action=prev_action,
                     prev_reward=prev_reward,
                 )
@@ -208,8 +211,7 @@ def make_train(
             _, last_val, _ = train_state.apply_fn(
                 train_state.params,
                 {
-                    "obs_img": timestep.observation["img"][:, None],
-                    "obs_dir": timestep.observation["direction"][:, None],
+                    "obs_img": timestep.observation[:, None, ..., None],
                     "prev_action": prev_action[:, None],
                     "prev_reward": prev_reward[:, None],
                 },
@@ -262,15 +264,22 @@ def make_train(
             loss_info = jtu.tree_map(lambda x: x.mean(-1).mean(-1), loss_info)
 
             rng, train_state = update_state[:2]
+
             # EVALUATE AGENT
-            rng, _rng = jax.random.split(rng)
-            eval_rng = jax.random.split(_rng, num=config.eval_episodes_per_device)
+
+            # EVALUATE AGENT
+            eval_puzzle_rng, eval_reset_rng = jax.random.split(jax.random.key(config.eval_seed))
+            eval_puzzle_rng = jax.random.split(eval_puzzle_rng, num=config.eval_episodes_per_device)
+            eval_reset_rng = jax.random.split(eval_reset_rng, num=config.eval_episodes_per_device)
+
+            eval_puzzles = jax.vmap(benchmark.sample_puzzle, in_axes=(0, None))(eval_puzzle_rng, "test")
+            eval_env_params = env_params.replace(puzzle=eval_puzzles)
 
             # vmap only on rngs
-            eval_stats = jax.vmap(rollout, in_axes=(0, None, None, None, None, None))(
-                eval_rng,
+            eval_stats = jax.vmap(rollout, in_axes=(0, None, 0, None, None, None))(
+                eval_reset_rng,
                 env,
-                env_params,
+                eval_env_params,
                 train_state,
                 # TODO: make this as a static method mb?
                 jnp.zeros((1, config.rnn_num_layers, config.rnn_hidden_dim)),
@@ -311,15 +320,7 @@ def train(config: TrainConfig):
         save_code=True,
     )
 
-    rng, env, env_params, init_hstate, train_state = make_states(config)
-    # Print all the variables in a readable format
-    # print(f"rng: {rng}")
-    # print(f"env: {env}")
-    # print(f"env_params: {env_params}")
-    # print(f"init_hstate: {init_hstate.shape}")
-    # Print TrainState keys
-    # print("\nTrainState keys:", train_state.__dict__.keys())
-    # jax.debug.breakpoint()
+    rng, env, env_params, benchmark, init_hstate, train_state = make_states(config)
 
     # replicating args across devices
     rng = jax.random.split(rng, num=jax.local_device_count())
@@ -328,7 +329,7 @@ def train(config: TrainConfig):
 
     print("Compiling...")
     t = time.time()
-    train_fn = make_train(env, env_params, config)
+    train_fn = make_train(env, env_params, benchmark, config)
     train_fn = train_fn.lower(rng, train_state, init_hstate).compile()
     elapsed_time = time.time() - t
     print(f"Done in {elapsed_time:.2f}s.")
