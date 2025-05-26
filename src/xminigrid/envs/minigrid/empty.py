@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Generic
+
 import jax
 import jax.numpy as jnp
 from flax import struct
@@ -50,6 +52,10 @@ class EmptyGoalRandomEnvParams(EnvParams):
     puzzle_key: jax.Array = struct.field(pytree_node=True, default_factory=lambda: jnp.asarray(0))
 
 
+class EmptyGoalRandomState(State[EnvCarryT], Generic[EnvCarryT]):
+    goal_position: jax.Array
+
+
 class EmptyGoalRandom(Environment[EmptyGoalRandomEnvParams, EnvCarry]):
     def default_params(self, **kwargs) -> EmptyGoalRandomEnvParams:
         params = EmptyGoalRandomEnvParams(height=9, width=9)
@@ -60,7 +66,7 @@ class EmptyGoalRandom(Environment[EmptyGoalRandomEnvParams, EnvCarry]):
             params = params.replace(max_steps=4 * (params.height * params.width))
         return params
 
-    def _generate_problem(self, params: EmptyGoalRandomEnvParams, key: jax.Array) -> State[EnvCarry]:
+    def _generate_problem(self, params: EmptyGoalRandomEnvParams, key: jax.Array) -> EmptyGoalRandomState[EnvCarry]:
         grid = room(params.height, params.width)
 
         mask = jnp.ones((grid.shape[0], grid.shape[1]), dtype=jnp.bool_)
@@ -75,11 +81,12 @@ class EmptyGoalRandom(Environment[EmptyGoalRandomEnvParams, EnvCarry]):
             direction=jnp.asarray(1),
         )
 
-        state = State(
+        state = EmptyGoalRandomState(
             key=key,
             step_num=jnp.asarray(0),
             grid=grid,
             agent=agent,
+            goal_position=pos,
             goal_encoding=_goal_encoding,
             rule_encoding=_rule_encoding,
             carry=EnvCarry(),
