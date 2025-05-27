@@ -52,7 +52,7 @@ class EmptyGoalRandomEnvParams(EnvParams):
     puzzle_key: jax.Array = struct.field(pytree_node=True, default_factory=lambda: jnp.asarray(0))
 
 
-class EmptyGoalRandomState(State[EnvCarryT], Generic[EnvCarryT]):
+class EmptyGoalRandomState(State):
     goal_position: jax.Array
 
 
@@ -66,7 +66,7 @@ class EmptyGoalRandom(Environment[EmptyGoalRandomEnvParams, EnvCarry]):
             params = params.replace(max_steps=4 * (params.height * params.width))
         return params
 
-    def _generate_problem(self, params: EmptyGoalRandomEnvParams, key: jax.Array) -> EmptyGoalRandomState[EnvCarry]:
+    def _generate_problem(self, params: EmptyGoalRandomEnvParams, key: jax.Array) -> EmptyGoalRandomState:
         grid = room(params.height, params.width)
 
         mask = jnp.ones((grid.shape[0], grid.shape[1]), dtype=jnp.bool_)
