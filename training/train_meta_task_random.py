@@ -35,7 +35,8 @@ class TrainConfig:
     project: str = "xminigrid"
     group: str = "default"
     name: str = "meta-task-ppo"
-    env_id: str = "XLand-MiniGrid-R1-9x9"
+    # env_id: str = "XLand-MiniGrid-R1-9x9"
+    env_id: str = "MiniGrid-EmptyGoalRandom-5x5"
     benchmark_id: str = "trivial-1m"
     img_obs: bool = False
     # agent
@@ -88,8 +89,8 @@ def make_states(config: TrainConfig):
         return config.lr * frac
 
     # setup environment
-    if "XLand" not in config.env_id:
-        raise ValueError("Only meta-task environments are supported.")
+    # if "XLand" not in config.env_id:
+    #     raise ValueError("Only meta-task environments are supported.")
 
     env, env_params = xminigrid.make(config.env_id)
     env = GymAutoResetWrapper(env)
@@ -102,7 +103,7 @@ def make_states(config: TrainConfig):
         env = RGBImgObservationWrapper(env)
 
     # loading benchmark
-    benchmark = xminigrid.load_benchmark(config.benchmark_id)
+    # benchmark = xminigrid.load_benchmark(config.benchmark_id)
 
     # set up training state
     rng = jax.random.key(config.train_seed)
@@ -136,13 +137,12 @@ def make_states(config: TrainConfig):
     )
     train_state = TrainState.create(apply_fn=network.apply, params=network_params, tx=tx)
 
-    return rng, env, env_params, benchmark, init_hstate, train_state
+    return rng, env, env_params, init_hstate, train_state
 
 
 def make_train(
     env: Environment,
     env_params: EnvParams,
-    benchmark: Benchmark,
     config: TrainConfig,
 ):
     @partial(jax.pmap, axis_name="devices")
@@ -159,14 +159,14 @@ def make_train(
 
             # INIT ENV
             rng, _rng1, _rng2 = jax.random.split(rng, num=3)
-            ruleset_rng = jax.random.split(_rng1, num=config.num_envs_per_device)
+            puzzle_rng = jax.random.split(_rng1, num=config.num_envs_per_device)
             reset_rng = jax.random.split(_rng2, num=config.num_envs_per_device)
 
             # sample rulesets for this meta update
-            rulesets = jax.vmap(benchmark.sample_ruleset)(ruleset_rng)
-            meta_env_params = env_params.replace(ruleset=rulesets)
+            meta_env_params = env_params.replace(puzzle_key=puzzle_rng)
 
             timestep = jax.vmap(env.reset, in_axes=(0, 0))(meta_env_params, reset_rng)
+            goal_positions = timestep.state.goal_position
             prev_action = jnp.zeros(config.num_envs_per_device, dtype=jnp.int32)
             prev_reward = jnp.zeros(config.num_envs_per_device)
 
@@ -277,18 +277,18 @@ def make_train(
                 return runner_state, loss_info
 
             # on each meta-update we reset rnn hidden to init_hstate
+            # I want to track all goal positions
             runner_state = (rng, train_state, timestep, prev_action, prev_reward, init_hstate)
             runner_state, loss_info = jax.lax.scan(_update_step, runner_state, None, config.num_inner_updates)
             # WARN: do not forget to get updated params
             rng, train_state = runner_state[:2]
 
             # EVALUATE AGENT
-            eval_ruleset_rng, eval_reset_rng = jax.random.split(jax.random.key(config.eval_seed))
-            eval_ruleset_rng = jax.random.split(eval_ruleset_rng, num=config.eval_num_envs_per_device)
+            eval_puzzle_rng, eval_reset_rng = jax.random.split(jax.random.key(config.eval_seed))
+            eval_puzzle_rng = jax.random.split(eval_puzzle_rng, num=config.eval_num_envs_per_device)
             eval_reset_rng = jax.random.split(eval_reset_rng, num=config.eval_num_envs_per_device)
 
-            eval_ruleset = jax.vmap(benchmark.sample_ruleset)(eval_ruleset_rng)
-            eval_env_params = env_params.replace(ruleset=eval_ruleset)
+            eval_env_params = env_params.replace(puzzle_key=eval_puzzle_rng)
 
             eval_stats = jax.vmap(rollout, in_axes=(0, None, 0, None, None, None))(
                 eval_reset_rng,
@@ -313,11 +313,11 @@ def make_train(
                 }
             )
             meta_state = (rng, train_state)
-            return meta_state, loss_info
+            return meta_state, (loss_info, goal_positions)
 
         meta_state = (rng, train_state)
-        meta_state, loss_info = jax.lax.scan(_meta_step, meta_state, None, config.num_meta_updates)
-        return {"state": meta_state[-1], "loss_info": loss_info}
+        meta_state, (loss_info, goal_positions) = jax.lax.scan(_meta_step, meta_state, None, config.num_meta_updates)
+        return {"state": meta_state[-1], "loss_info": loss_info, "goal_positions": goal_positions}
 
     return train
 
@@ -336,7 +336,7 @@ def train(config: TrainConfig):
     if config.checkpoint_path is not None and os.path.exists(config.checkpoint_path):
         shutil.rmtree(config.checkpoint_path)
 
-    rng, env, env_params, benchmark, init_hstate, train_state = make_states(config)
+    rng, env, env_params, init_hstate, train_state = make_states(config)
     # replicating args across devices
     rng = jax.random.split(rng, num=jax.local_device_count())
     train_state = replicate(train_state, jax.local_devices())
@@ -344,7 +344,7 @@ def train(config: TrainConfig):
 
     print("Compiling...")
     t = time.time()
-    train_fn = make_train(env, env_params, benchmark, config)
+    train_fn = make_train(env, env_params, config)
     train_fn = train_fn.lower(rng, train_state, init_hstate).compile()
     elapsed_time = time.time() - t
     print(f"Done in {elapsed_time:.2f}s.")
@@ -357,6 +357,8 @@ def train(config: TrainConfig):
 
     print("Logginig...")
     loss_info = unreplicate(train_info["loss_info"])
+
+    print("Goal positions: ", train_info["goal_positions"])
 
     total_transitions = 0
     for i in range(config.num_meta_updates):
