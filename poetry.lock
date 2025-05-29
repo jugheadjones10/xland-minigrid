@@ -2692,4 +2692,4 @@ dev = ["pre-commit", "pyright", "ruff"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.9"
-content-hash = "86ae5e31888613e8e37fb4e419f0359d97ec4201a0bdaff6388f131bcb8c64c6"
+content-hash = "289656fdb001e4629e6754d5b83f846e089cffc2f3493d00caca0bed122eeab0"
