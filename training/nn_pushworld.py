@@ -88,7 +88,7 @@ class EmbeddingEncoder(nn.Module):
 
 class ActorCriticInput(TypedDict):
     obs_img: jax.Array
-    obs_dir: jax.Array
+    obs_goal: jax.Array
     prev_action: jax.Array
     prev_reward: jax.Array
 
@@ -188,6 +188,7 @@ class ActorCriticRNN(nn.Module):
                 ]
             )
         action_encoder = nn.Embed(self.num_actions, self.action_emb_dim)
+        goal_encoder = nn.Dense(self.action_emb_dim, dtype=self.dtype, param_dtype=self.param_dtype)
 
         rnn_core = BatchedRNNModel(
             self.rnn_hidden_dim, self.rnn_num_layers, dtype=self.dtype, param_dtype=self.param_dtype
@@ -215,10 +216,11 @@ class ActorCriticRNN(nn.Module):
 
         # [batch_size, seq_len, ...]
         obs_emb = img_encoder(inputs["obs_img"].astype(jnp.int32)).reshape(B, S, -1)
+        goal_emb = goal_encoder(inputs["obs_goal"])
         act_emb = action_encoder(inputs["prev_action"])
 
-        # [batch_size, seq_len, hidden_dim + act_emb_dim + 1]
-        out = jnp.concatenate([obs_emb, act_emb, inputs["prev_reward"][..., None]], axis=-1)
+        # [batch_size, seq_len, hidden_dim + 2 * act_emb_dim + 1]
+        out = jnp.concatenate([obs_emb, goal_emb, act_emb, inputs["prev_reward"][..., None]], axis=-1)
 
         # core networks
         out, new_hidden = rnn_core(out, hidden)

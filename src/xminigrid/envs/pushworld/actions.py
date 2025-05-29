@@ -43,7 +43,7 @@ def _apply_move(
     max_xy = jnp.array((LEVEL0_SIZE - 1, LEVEL0_SIZE - 1))
 
     pos1 = jnp.clip(agent_pos + delta, zero, max_xy)
-    tile1 = grid[pos1[1], pos1[0]]
+    tile1 = grid[pos1[1], pos1[0], 0]
 
     # CASE A: move into empty cell → no goal reached
     def _move_agent(g):
@@ -54,7 +54,7 @@ def _apply_move(
     # CASE B: attempt to push a box (either MOVABLE or MOVABLE_GOAL)
     def _push_box(g):
         pos2 = jnp.clip(pos1 + delta, zero, max_xy)
-        tile2 = g[pos2[1], pos2[0]]
+        tile2 = g[pos2[1], pos2[0], 0]
 
         def _do_push_one(h):
             # only succeed if can_push1 was True
@@ -70,7 +70,7 @@ def _apply_move(
         # 2-box chain push?
         def _try_push_two(h):
             pos3 = jnp.clip(pos2 + delta, zero, max_xy)
-            tile3 = h[pos3[1], pos3[0]]
+            tile3 = h[pos3[1], pos3[0], 0]
 
             def _do_push_two(k):
                 reached = (tile1 == Tiles.MOVABLE_GOAL) & jnp.all(pos3 == goal_pos)

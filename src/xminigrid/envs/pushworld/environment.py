@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import abc
-from typing import Any, Generic, Optional, TypeVar
+from typing import Any, Generic, Literal, Optional, TypeVar
 
 import jax
 import jax.numpy as jnp
@@ -9,6 +9,7 @@ import numpy as np
 from flax import struct
 
 from .actions import take_action
+from .benchmarks import Benchmark
 from .constants import LEVEL0_SIZE, NUM_ACTIONS
 from .grid import get_obs_from_puzzle
 from .rgb_render import rgb_render
@@ -38,8 +39,8 @@ class Environment(abc.ABC, Generic[EnvParamsT, EnvCarryT]):
         return int(NUM_ACTIONS)
 
     # We assume level 0 only for now so we limit the shape
-    def observation_shape(self, params: EnvParamsT) -> tuple[int, int] | dict[str, Any]:
-        return LEVEL0_SIZE, LEVEL0_SIZE
+    def observation_shape(self, params: EnvParamsT) -> tuple[int, int, int] | dict[str, Any]:
+        return LEVEL0_SIZE, LEVEL0_SIZE, 1
 
     @abc.abstractmethod
     def _generate_problem(self, params: EnvParamsT, key: jax.Array) -> State[EnvCarryT]: ...
@@ -109,9 +110,6 @@ class PushWorldEnvironment(Environment[EnvParams, EnvCarry]):
         # due to how jax works
         # puzzle_copy = jtu.tree_map(lambda x: x, params.puzzle)
 
-        # Actually, might be better to convert the encoded state into grid view, and just
-        # re-use that state as observation
-        # Converting to grid on every step seems expensive
         obs = get_obs_from_puzzle(params.puzzle)
 
         state = State(
@@ -120,6 +118,32 @@ class PushWorldEnvironment(Environment[EnvParams, EnvCarry]):
             puzzle=obs,
             agent_pos=(params.puzzle.agent - 1),
             goal_pos=(params.puzzle.goal - 1),
+            carry=EnvCarry(),
+        )
+        return state
+
+
+class PushWorldSingleTaskEnvParams(EnvParams):
+    benchmark: Benchmark = struct.field(pytree_node=True, default=None)
+    type: Literal["train", "test"] = struct.field(pytree_node=False, default="train")
+
+
+class PushWorldSingleTaskEnvironment(Environment[PushWorldSingleTaskEnvParams, EnvCarry]):
+    def default_params(self, **kwargs: Any) -> PushWorldSingleTaskEnvParams:
+        params = PushWorldSingleTaskEnvParams()
+        params = params.replace(**kwargs)
+        return params
+
+    def _generate_problem(self, params: PushWorldSingleTaskEnvParams, key: jax.Array) -> State[EnvCarry]:
+        puzzle = params.benchmark.sample_puzzle(key, params.type)
+        obs = get_obs_from_puzzle(puzzle)
+
+        state = State(
+            key=key,
+            step_num=jnp.asarray(0),
+            puzzle=obs,
+            agent_pos=(puzzle.agent - 1),
+            goal_pos=(puzzle.goal - 1),
             carry=EnvCarry(),
         )
         return state

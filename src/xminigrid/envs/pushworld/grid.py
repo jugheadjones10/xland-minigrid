@@ -6,15 +6,14 @@ from .types import GridState, IntOrArray, PushWorldPuzzle
 
 
 def empty_world(height: IntOrArray, width: IntOrArray) -> GridState:
-    grid = jnp.zeros((height, width), dtype=jnp.uint8)
-    grid = grid.at[:, :].set(Tiles.EMPTY)
+    grid = jnp.zeros((height, width, 1), dtype=jnp.uint8)
+    grid = grid.at[:, :, 0].set(Tiles.EMPTY)
     return grid
 
 
 def get_obs_from_puzzle(puzzle: PushWorldPuzzle) -> GridState:
     grid = empty_world(LEVEL0_SIZE, LEVEL0_SIZE)
 
-    # set agent at row=y_a-1, col=x_a-1
     grid = grid.at[puzzle.agent[1] - 1, puzzle.agent[0] - 1].set(Tiles.AGENT)
     grid = grid.at[puzzle.movable[1] - 1, puzzle.movable[0] - 1].set(Tiles.MOVABLE)
     grid = grid.at[puzzle.movable_goal[1] - 1, puzzle.movable_goal[0] - 1].set(Tiles.MOVABLE_GOAL)

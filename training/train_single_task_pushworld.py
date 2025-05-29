@@ -1,14 +1,17 @@
 # Adapted from PureJaxRL implementation and minigrid baselines, source:
 # https://github.com/lupuandr/explainable-policies/blob/50acbd777dc7c6d6b8b7255cd1249e81715bcb54/purejaxrl/ppo_rnn.py#L4
 # https://github.com/lcswillems/rl-starter-files/blob/master/model.py
+import os
 import time
 from dataclasses import asdict, dataclass
 from functools import partial
 from typing import Optional
 
+import imageio
 import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
+import numpy as np
 import optax
 import pyrallis
 import wandb
@@ -22,11 +25,15 @@ from utils_pushworld import Transition, calculate_gae, ppo_update_networks, roll
 # from xminigrid.wrappers import DirectionObservationWrapper, GymAutoResetWrapper
 import xminigrid.envs.pushworld as pushworld
 from xminigrid.envs.pushworld.benchmarks import Benchmark
-from xminigrid.envs.pushworld.environment import Environment, EnvParams, EnvParamsT, PushWorldEnvironment
-from xminigrid.envs.pushworld.wrappers import GymAutoResetWrapper
+from xminigrid.envs.pushworld.constants import Tiles
+from xminigrid.envs.pushworld.environment import Environment, EnvParams, EnvParamsT, PushWorldSingleTaskEnvironment
+from xminigrid.envs.pushworld.scripts.upload import encode_puzzle
+from xminigrid.envs.pushworld.wrappers import GoalObservationWrapper, GymAutoResetWrapper
 
 # this will be default in new jax versions anyway
 jax.config.update("jax_threefry_partitionable", True)
+
+TEST_PUZZLES_DIR = "/Users/kimyoungjin/Projects/monkey/xland-minigrid/src/xminigrid/envs/pushworld/test_puzzles"
 
 
 @dataclass
@@ -80,12 +87,17 @@ def make_states(config: TrainConfig):
         return config.lr * frac
 
     # setup environment
-    env = PushWorldEnvironment()
+    env = PushWorldSingleTaskEnvironment()
     env_params = env.default_params()
 
     env = GymAutoResetWrapper(env)
+    env = GoalObservationWrapper(env)
 
-    benchmark = pushworld.load_benchmark(config.benchmark_id)
+    # benchmark = pushworld.load_benchmark(config.benchmark_id)
+    benchmark = Benchmark(
+        train_puzzles=jnp.array([encode_puzzle(os.path.join(TEST_PUZZLES_DIR, "test_puzzle.pwp"))]),
+        test_puzzles=jnp.array([encode_puzzle(os.path.join(TEST_PUZZLES_DIR, "test_puzzle.pwp"))]),
+    )
 
     # enabling image observations if needed
     # if config.img_obs:
@@ -112,7 +124,8 @@ def make_states(config: TrainConfig):
     shapes = env.observation_shape(env_params)
 
     init_obs = {
-        "obs_img": jnp.zeros((config.num_envs_per_device, 1, *shapes, 1)),
+        "obs_img": jnp.zeros((config.num_envs_per_device, 1, *shapes["img"])),
+        "obs_goal": jnp.zeros((config.num_envs_per_device, 1, shapes["goal"])),
         "prev_action": jnp.zeros((config.num_envs_per_device, 1), dtype=jnp.int32),
         "prev_reward": jnp.zeros((config.num_envs_per_device, 1)),
     }
@@ -141,20 +154,14 @@ def make_train(
         init_hstate: jax.Array,
     ):
         # INIT ENV
-        rng, _rng1, _rng2 = jax.random.split(rng, num=3)
-        puzzle_rng = jax.random.split(_rng1, num=config.num_envs_per_device)
-        reset_rng = jax.random.split(_rng2, num=config.num_envs_per_device)
+        rng, _rng = jax.random.split(rng)
+        reset_rng = jax.random.split(_rng, config.num_envs_per_device)
 
-        puzzles = jax.vmap(benchmark.sample_puzzle, in_axes=(0, None))(puzzle_rng, "train")
-        puzzles_env_params = env_params.replace(puzzle=puzzles)
+        puzzle_env_params = env_params.replace(benchmark=benchmark, type="train")
 
-        timestep = jax.vmap(env.reset, in_axes=(0, 0))(puzzles_env_params, reset_rng)
+        timestep = jax.vmap(env.reset, in_axes=(None, 0))(puzzle_env_params, reset_rng)
         prev_action = jnp.zeros(config.num_envs_per_device, dtype=jnp.int32)
         prev_reward = jnp.zeros(config.num_envs_per_device)
-
-        # jax.debug.print("prev_reward shape: {}", prev_reward.shape)
-        # jax.debug.print("prev_action shape: {}", prev_action.shape)
-        # jax.debug.breakpoint()
 
         # TRAIN LOOP
         def _update_step(runner_state, update_idx):
@@ -164,18 +171,14 @@ def make_train(
             def _env_step(runner_state, _):
                 rng, train_state, prev_timestep, prev_action, prev_reward, prev_hstate = runner_state
 
-                # jax.debug.print("prev_observation image shape: {}", prev_timestep.observation["img"].shape)
-                # jax.debug.print("prev_observation direction shape: {}", prev_timestep.observation["direction"].shape)
-                # jax.debug.print("prev_action shape: {}", prev_action.shape)
-                # jax.debug.print("prev_reward shape: {}", prev_reward.shape)
-
                 # SELECT ACTION
                 rng, _rng = jax.random.split(rng)
                 dist, value, hstate = train_state.apply_fn(
                     train_state.params,
                     {
                         # [batch_size, seq_len=1, ...]
-                        "obs_img": prev_timestep.observation[:, None, ..., None],
+                        "obs_img": prev_timestep.observation["img"][:, None],
+                        "obs_goal": prev_timestep.observation["goal"][:, None],
                         "prev_action": prev_action[:, None],
                         "prev_reward": prev_reward[:, None],
                     },
@@ -186,14 +189,15 @@ def make_train(
                 action, value, log_prob = action.squeeze(1), value.squeeze(1), log_prob.squeeze(1)
 
                 # STEP ENV
-                timestep = jax.vmap(env.step, in_axes=0)(env_params, prev_timestep, action)
+                timestep = jax.vmap(env.step, in_axes=(None, 0, 0))(puzzle_env_params, prev_timestep, action)
                 transition = Transition(
                     done=timestep.last(),
                     action=action,
                     value=value,
                     reward=timestep.reward,
                     log_prob=log_prob,
-                    obs=prev_timestep.observation[..., None],
+                    obs=prev_timestep.observation["img"],
+                    goal=prev_timestep.observation["goal"],
                     prev_action=prev_action,
                     prev_reward=prev_reward,
                 )
@@ -211,7 +215,8 @@ def make_train(
             _, last_val, _ = train_state.apply_fn(
                 train_state.params,
                 {
-                    "obs_img": timestep.observation[:, None, ..., None],
+                    "obs_img": timestep.observation["img"][:, None],
+                    "obs_goal": timestep.observation["goal"][:, None],
                     "prev_action": prev_action[:, None],
                     "prev_reward": prev_reward[:, None],
                 },
@@ -266,18 +271,13 @@ def make_train(
             rng, train_state = update_state[:2]
 
             # EVALUATE AGENT
-
-            # EVALUATE AGENT
-            eval_puzzle_rng, eval_reset_rng = jax.random.split(jax.random.key(config.eval_seed))
-            eval_puzzle_rng = jax.random.split(eval_puzzle_rng, num=config.eval_episodes_per_device)
-            eval_reset_rng = jax.random.split(eval_reset_rng, num=config.eval_episodes_per_device)
-
-            eval_puzzles = jax.vmap(benchmark.sample_puzzle, in_axes=(0, None))(eval_puzzle_rng, "test")
-            eval_env_params = env_params.replace(puzzle=eval_puzzles)
+            rng, _rng = jax.random.split(rng)
+            eval_rng = jax.random.split(_rng, num=config.eval_episodes_per_device)
+            eval_env_params = puzzle_env_params.replace(type="test")
 
             # vmap only on rngs
-            eval_stats = jax.vmap(rollout, in_axes=(0, None, 0, None, None, None))(
-                eval_reset_rng,
+            eval_stats = jax.vmap(rollout, in_axes=(0, None, None, None, None, None))(
+                eval_rng,
                 env,
                 eval_env_params,
                 train_state,
@@ -307,6 +307,104 @@ def make_train(
         return {"runner_state": runner_state, "loss_info": loss_info}
 
     return train
+
+
+def evaluate(train_info, config: TrainConfig):
+    benchmark = Benchmark(
+        train_puzzles=jnp.array([encode_puzzle(os.path.join(TEST_PUZZLES_DIR, "test_puzzle.pwp"))]),
+        test_puzzles=jnp.array([encode_puzzle(os.path.join(TEST_PUZZLES_DIR, "test_puzzle.pwp"))]),
+    )
+
+    env = PushWorldSingleTaskEnvironment()
+    env_params = env.default_params()
+    env_params = env_params.replace(benchmark=benchmark, type="test")
+    env = GymAutoResetWrapper(env)
+    env = GoalObservationWrapper(env)
+
+    params = train_info["runner_state"][1].params
+    model = ActorCriticRNN(
+        num_actions=env.num_actions(env_params),
+        action_emb_dim=config.action_emb_dim,
+        rnn_hidden_dim=config.rnn_hidden_dim,
+        rnn_num_layers=config.rnn_num_layers,
+        head_hidden_dim=config.head_hidden_dim,
+        img_obs=config.img_obs,
+    )
+
+    # jitting all functions
+    apply_fn, reset_fn, step_fn = jax.jit(model.apply), jax.jit(env.reset), jax.jit(env.step)
+
+    # for logging
+    total_reward = 0
+    rendered_imgs = []
+
+    rng = jax.random.key(1)
+    rng, _rng = jax.random.split(rng)
+
+    # initial inputs
+    hidden = model.initialize_carry(1)
+    prev_reward = jnp.asarray(0)
+    prev_action = jnp.asarray(0)
+
+    timestep = reset_fn(env_params, _rng)
+    rendered_imgs.append(text_to_rgb(timestep.state.goal_pos, timestep.observation["img"].squeeze(-1)))
+
+    while not timestep.last():
+        rng, _rng = jax.random.split(rng)
+        dist, _, hidden = apply_fn(
+            params,
+            {
+                "obs_img": timestep.observation["img"][None, None, ...],
+                "obs_goal": timestep.observation["goal"][None, None, ...],
+                "prev_action": prev_action[None, None, ...],
+                "prev_reward": prev_reward[None, None, ...],
+            },
+            hidden,
+        )
+        action = dist.sample(seed=_rng).squeeze()
+
+        timestep = step_fn(env_params, timestep, action)
+        print("Action:", action)
+        print("Reward:", timestep.reward)
+        prev_action = action
+        prev_reward = timestep.reward
+
+        total_reward += timestep.reward.item()
+        rendered_imgs.append(text_to_rgb(timestep.state.goal_pos, timestep.observation["img"].squeeze(-1)))
+
+    print("Reward:", total_reward)
+    imageio.mimsave("eval_rollout.mp4", rendered_imgs, fps=16, format="mp4")
+
+
+def hex_to_rgb(hex_string: str):
+    """Converts a standard 6-digit hex color into a tuple of decimal
+    (red, green, blue) values."""
+    return tuple(int(hex_string[i : i + 2], 16) for i in (0, 2, 4))
+
+
+symbol_to_rgb = {
+    0: hex_to_rgb("FFFFFF"),  # empty → white
+    1: hex_to_rgb("00DC00"),  # agent → "00DC00"
+    2: hex_to_rgb("469BFF"),  # movable → "469BFF"
+    3: hex_to_rgb("DC0000"),  # movable_goal → "DC0000"
+    4: hex_to_rgb("0A0A0A"),  # wall → "0A0A0A"
+}
+
+
+def text_to_rgb(goal_pos, grid):
+    """grid: 2-D array of str, shape (H, W)"""
+    h, w = grid.shape
+    img = np.zeros((h, w, 3), dtype=np.uint8)
+    for sym, rgb in symbol_to_rgb.items():
+        mask = grid == sym
+        img[mask] = rgb
+
+    if grid[goal_pos[1], goal_pos[0]] == Tiles.WALL:
+        img[goal_pos[1], goal_pos[0]] = hex_to_rgb("FF7F7F")  # light red
+
+    # upscale (optional) so each tile is, say, 16×16 pixels
+    img = np.kron(img, np.ones((64, 64, 1), dtype=np.uint8))
+    return img
 
 
 @pyrallis.wrap()
@@ -355,6 +453,12 @@ def train(config: TrainConfig):
     run.summary["steps_per_second"] = (config.total_timesteps_per_device * jax.local_device_count()) / elapsed_time
 
     print("Final return: ", float(loss_info["eval/returns"][-1]))
+
+    train_info = unreplicate(train_info)
+    # Run and show evaluation video
+    evaluate(train_info, config)
+    print("Evaluation done")
+
     run.finish()
 
 

@@ -12,9 +12,9 @@ LEVEL0_SIZE = 5
 class Tiles(struct.PyTreeNode):
     EMPTY: int = struct.field(pytree_node=False, default=0)
     AGENT: int = struct.field(pytree_node=False, default=1)
-    MOVABLE: int = struct.field(pytree_node=False, default=3)
-    MOVABLE_GOAL: int = struct.field(pytree_node=False, default=4)
-    WALL: int = struct.field(pytree_node=False, default=5)
+    MOVABLE: int = struct.field(pytree_node=False, default=2)
+    MOVABLE_GOAL: int = struct.field(pytree_node=False, default=3)
+    WALL: int = struct.field(pytree_node=False, default=4)
 
 
 # DIRECTIONS = jnp.array(
