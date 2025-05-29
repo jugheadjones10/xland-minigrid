@@ -73,9 +73,17 @@ def _apply_move(
             tile3 = h[pos3[1], pos3[0], 0]
 
             def _do_push_two(k):
-                reached = (tile1 == Tiles.MOVABLE_GOAL) & jnp.all(pos3 == goal_pos)
-                # move second box (tile1) → pos3
-                k = k.at[pos3[1], pos3[0]].set(tile1)
+                # Preserve individual box types when pushing a two-box chain.
+                # Box at `pos2` (tile2) becomes the farthest one (pos3),
+                # box at `pos1` (tile1) moves into `pos2`.
+
+                # Check if the puzzle is solved (the MOVABLE_GOAL tile ends up on the goal).
+                reached = ((tile1 == Tiles.MOVABLE_GOAL) & jnp.all(pos2 == goal_pos)) | (
+                    (tile2 == Tiles.MOVABLE_GOAL) & jnp.all(pos3 == goal_pos)
+                )
+
+                # move second box (tile2) → pos3
+                k = k.at[pos3[1], pos3[0]].set(tile2)
                 # move first box (tile1) → pos2
                 k = k.at[pos2[1], pos2[0]].set(tile1)
                 # move agent → pos1
