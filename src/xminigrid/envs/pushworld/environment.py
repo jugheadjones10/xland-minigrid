@@ -126,6 +126,7 @@ class PushWorldEnvironment(Environment[EnvParams, EnvCarry]):
 class PushWorldSingleTaskEnvParams(EnvParams):
     benchmark: Benchmark = struct.field(pytree_node=True, default=None)
     type: Literal["train", "test"] = struct.field(pytree_node=False, default="train")
+    eval_puzzle_ids: jax.Array = struct.field(pytree_node=True, default=jnp.array([]))
 
 
 class PushWorldSingleTaskEnvironment(Environment[PushWorldSingleTaskEnvParams, EnvCarry]):

@@ -34,13 +34,14 @@ class Benchmark(struct.PyTreeNode):
     def num_test_puzzles(self) -> int:
         return len(self.test_puzzles)
 
-    def get_puzzle(self, puzzle_id: int | jax.Array, type: Literal["train", "test"] = "train") -> PushWorldPuzzle:
+    def get_puzzle(self, puzzle_id: int, type: Literal["train", "test"] = "train") -> PushWorldPuzzle:
         puzzle = jax.lax.cond(
             type == "train",
             lambda: jax.lax.dynamic_index_in_dim(self.train_puzzles, puzzle_id, keepdims=False),
             lambda: jax.lax.dynamic_index_in_dim(self.test_puzzles, puzzle_id, keepdims=False),
         )
         return PushWorldPuzzle(
+            id=puzzle_id,
             agent=puzzle[:2],
             goal=puzzle[2:4],
             movable=puzzle[4:6],
