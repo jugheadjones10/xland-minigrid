@@ -24,7 +24,6 @@ class EnvParams(struct.PyTreeNode):
     max_steps: Optional[int] = struct.field(pytree_node=False, default=100)
     render_mode: str = struct.field(pytree_node=False, default="rgb_array")
 
-    # rng key used to choose random level 0 puzzle
     puzzle: PushWorldPuzzle = struct.field(pytree_node=True, default=None)
 
 
@@ -136,7 +135,12 @@ class PushWorldSingleTaskEnvironment(Environment[PushWorldSingleTaskEnvParams, E
         return params
 
     def _generate_problem(self, params: PushWorldSingleTaskEnvParams, key: jax.Array) -> State[EnvCarry]:
-        puzzle = params.benchmark.sample_puzzle(key, params.type)
+        puzzle = jax.lax.cond(
+            params.type == "train",
+            lambda: params.benchmark.sample_puzzle(key, "train"),
+            lambda: params.puzzle,
+        )
+
         obs = get_obs_from_puzzle(puzzle)
 
         state = State(

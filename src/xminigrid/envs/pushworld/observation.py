@@ -6,11 +6,6 @@ from .constants import TILES_REGISTRY, Colors, Tiles
 from .grid import align_with_up, check_see_behind
 from .types import PushWorldPuzzle
 
-def pushworld_observation(pushworld_puzzle: PushWorldPuzzle) -> jax.Array:
-    # Create a 5x5 observation of the puzzle,
-    # with different numbers standing for different object types
-    
-
 
 def crop_field_of_view(grid: GridState, agent: AgentState, height: int, width: int) -> jax.Array:
     # TODO: assert height and width are odd and >= 3

@@ -34,7 +34,10 @@ class Benchmark(struct.PyTreeNode):
     def num_test_puzzles(self) -> int:
         return len(self.test_puzzles)
 
-    def get_puzzle(self, puzzle_id: int, type: Literal["train", "test"] = "train") -> PushWorldPuzzle:
+    def get_test_puzzles(self) -> PushWorldPuzzle:
+        return jax.vmap(self.get_puzzle, in_axes=(0, None))(jnp.arange(self.num_test_puzzles()), "test")
+
+    def get_puzzle(self, puzzle_id: int | jax.Array, type: Literal["train", "test"] = "train") -> PushWorldPuzzle:
         puzzle = jax.lax.cond(
             type == "train",
             lambda: jax.lax.dynamic_index_in_dim(self.train_puzzles, puzzle_id, keepdims=False),
