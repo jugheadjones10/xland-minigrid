@@ -109,6 +109,11 @@ class GoalObservationWrapper(Wrapper):
         timestep = self.__extend_obs(timestep)
         return timestep
 
+    def eval_reset(self, params, key):
+        timestep = self._env.eval_reset(params, key)
+        timestep = self.__extend_obs(timestep)
+        return timestep
+
     def step(self, params, timestep, action):
         timestep = self._env.step(params, timestep, action)
         timestep = self.__extend_obs(timestep)

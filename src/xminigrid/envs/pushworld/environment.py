@@ -44,11 +44,11 @@ class Environment(abc.ABC, Generic[EnvParamsT, EnvCarryT]):
     @abc.abstractmethod
     def _generate_problem(self, params: EnvParamsT, key: jax.Array) -> State[EnvCarryT]: ...
 
-    @abc.abstractmethod
-    def _generate_problem_eval(self, params: EnvParamsT, key: jax.Array) -> State[EnvCarryT]: ...
+    def _generate_problem_eval(self, params: EnvParamsT, key: jax.Array) -> State[EnvCarryT]:
+        raise NotImplementedError("This method should be implemented by the subclass")
 
-    @abc.abstractmethod
-    def eval_reset(self, params: EnvParamsT, key: jax.Array) -> TimeStep[EnvCarryT]: ...
+    def eval_reset(self, params: EnvParamsT, key: jax.Array) -> TimeStep[EnvCarryT]:
+        raise NotImplementedError("This method should be implemented by the subclass")
 
     def reset(self, params: EnvParamsT, key: jax.Array) -> TimeStep[EnvCarryT]:
         state = self._generate_problem(params, key)
