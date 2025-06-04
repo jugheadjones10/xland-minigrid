@@ -22,14 +22,20 @@ class Wrapper(Environment[EnvParamsT, EnvCarryT]):
     def num_actions(self, params: EnvParamsT) -> int:
         return self._env.num_actions(params)
 
-    def observation_shape(self, params: EnvParamsT) -> tuple[int, int] | dict[str, Any]:
+    def observation_shape(self, params: EnvParamsT) -> tuple[int, int, int] | dict[str, Any]:
         return self._env.observation_shape(params)
 
     def _generate_problem(self, params: EnvParamsT, key: jax.Array) -> State[EnvCarryT]:
         return self._env._generate_problem(params, key)
 
+    def _generate_problem_eval(self, params: EnvParamsT, key: jax.Array) -> State[EnvCarryT]:
+        return self._env._generate_problem_eval(params, key)
+
     def reset(self, params: EnvParamsT, key: jax.Array) -> TimeStep[EnvCarryT]:
         return self._env.reset(params, key)
+
+    def eval_reset(self, params: EnvParamsT, key: jax.Array) -> TimeStep[EnvCarryT]:
+        return self._env.eval_reset(params, key)
 
     def step(self, params: EnvParamsT, timestep: TimeStep[EnvCarryT], action: IntOrArray) -> TimeStep[EnvCarryT]:
         return self._env.step(params, timestep, action)

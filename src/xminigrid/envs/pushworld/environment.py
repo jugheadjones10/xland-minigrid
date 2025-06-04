@@ -44,6 +44,12 @@ class Environment(abc.ABC, Generic[EnvParamsT, EnvCarryT]):
     @abc.abstractmethod
     def _generate_problem(self, params: EnvParamsT, key: jax.Array) -> State[EnvCarryT]: ...
 
+    @abc.abstractmethod
+    def _generate_problem_eval(self, params: EnvParamsT, key: jax.Array) -> State[EnvCarryT]: ...
+
+    @abc.abstractmethod
+    def eval_reset(self, params: EnvParamsT, key: jax.Array) -> TimeStep[EnvCarryT]: ...
+
     def reset(self, params: EnvParamsT, key: jax.Array) -> TimeStep[EnvCarryT]:
         state = self._generate_problem(params, key)
         timestep = TimeStep(
@@ -149,19 +155,6 @@ class PushWorldSingleTaskEnvironment(Environment[PushWorldSingleTaskEnvParams, E
         )
         return state
 
-    def _generate_problem_eval(self, params: PushWorldSingleTaskEnvParams, key: jax.Array) -> State[EnvCarry]:
-        obs = get_obs_from_puzzle(params.puzzle)
-
-        state = State(
-            key=key,
-            step_num=jnp.asarray(0),
-            puzzle=obs,
-            agent_pos=(params.puzzle.agent - 1),
-            goal_pos=(params.puzzle.goal - 1),
-            carry=EnvCarry(),
-        )
-        return state
-
     def eval_reset(self, params: PushWorldSingleTaskEnvParams, key: jax.Array) -> TimeStep[EnvCarry]:
         state = self._generate_problem_eval(params, key)
 
@@ -174,3 +167,16 @@ class PushWorldSingleTaskEnvironment(Environment[PushWorldSingleTaskEnvParams, E
             observation=state.puzzle,
         )
         return timestep
+
+    def _generate_problem_eval(self, params: PushWorldSingleTaskEnvParams, key: jax.Array) -> State[EnvCarry]:
+        obs = get_obs_from_puzzle(params.puzzle)
+
+        state = State(
+            key=key,
+            step_num=jnp.asarray(0),
+            puzzle=obs,
+            agent_pos=(params.puzzle.agent - 1),
+            goal_pos=(params.puzzle.goal - 1),
+            carry=EnvCarry(),
+        )
+        return state
