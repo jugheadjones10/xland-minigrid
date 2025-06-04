@@ -135,11 +135,7 @@ class PushWorldSingleTaskEnvironment(Environment[PushWorldSingleTaskEnvParams, E
         return params
 
     def _generate_problem(self, params: PushWorldSingleTaskEnvParams, key: jax.Array) -> State[EnvCarry]:
-        puzzle = jax.lax.cond(
-            params.type == "train",
-            lambda: params.benchmark.sample_puzzle(key, "train"),
-            lambda: params.puzzle,
-        )
+        puzzle = params.benchmark.sample_puzzle(key, "train")
 
         obs = get_obs_from_puzzle(puzzle)
 
@@ -152,3 +148,29 @@ class PushWorldSingleTaskEnvironment(Environment[PushWorldSingleTaskEnvParams, E
             carry=EnvCarry(),
         )
         return state
+
+    def _generate_problem_eval(self, params: PushWorldSingleTaskEnvParams, key: jax.Array) -> State[EnvCarry]:
+        obs = get_obs_from_puzzle(params.puzzle)
+
+        state = State(
+            key=key,
+            step_num=jnp.asarray(0),
+            puzzle=obs,
+            agent_pos=(params.puzzle.agent - 1),
+            goal_pos=(params.puzzle.goal - 1),
+            carry=EnvCarry(),
+        )
+        return state
+
+    def eval_reset(self, params: PushWorldSingleTaskEnvParams, key: jax.Array) -> TimeStep[EnvCarry]:
+        state = self._generate_problem_eval(params, key)
+
+        timestep = TimeStep(
+            state=state,
+            step_type=StepType.FIRST,
+            reward=jnp.asarray(0.0),
+            discount=jnp.asarray(1.0),
+            # A bit redundant but we want to stick to the original API as much as possible
+            observation=state.puzzle,
+        )
+        return timestep
