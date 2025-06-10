@@ -9,7 +9,7 @@ from typing_extensions import TypeAlias
 
 
 class PushWorldPuzzle(struct.PyTreeNode):
-    id: int | jax.Array
+    id: jax.Array
     agent: jax.Array
     goal: jax.Array
     movable: jax.Array

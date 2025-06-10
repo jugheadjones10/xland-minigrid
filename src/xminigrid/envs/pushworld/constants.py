@@ -7,6 +7,9 @@ NUM_ACTIONS = 4
 NUM_TILES = 5
 LEVEL0_SIZE = 5
 
+SUCCESS_REWARD = 10.0
+STEP_REWARD = -0.01
+
 
 # enums, kinda...
 class Tiles(struct.PyTreeNode):

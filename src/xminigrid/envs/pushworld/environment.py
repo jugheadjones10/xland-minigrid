@@ -10,7 +10,7 @@ from flax import struct
 
 from .actions import take_action
 from .benchmarks import Benchmark
-from .constants import LEVEL0_SIZE, NUM_ACTIONS
+from .constants import LEVEL0_SIZE, NUM_ACTIONS, STEP_REWARD, SUCCESS_REWARD
 from .grid import get_obs_from_puzzle
 from .rgb_render import rgb_render
 from .types import EnvCarry, EnvCarryT, IntOrArray, PushWorldPuzzle, State, StepType, TimeStep
@@ -23,7 +23,6 @@ class EnvParams(struct.PyTreeNode):
     # Spoiler: probably it will not :(
     max_steps: Optional[int] = struct.field(pytree_node=False, default=100)
     render_mode: str = struct.field(pytree_node=False, default="rgb_array")
-
     puzzle: PushWorldPuzzle = struct.field(pytree_node=True, default=None)
 
 
@@ -41,26 +40,19 @@ class Environment(abc.ABC, Generic[EnvParamsT, EnvCarryT]):
     def observation_shape(self, params: EnvParamsT) -> tuple[int, int, int] | dict[str, Any]:
         return LEVEL0_SIZE, LEVEL0_SIZE, 1
 
+    # Reset logic can be different depending on whether it is single task or meta task.
+    # For single task, we want to sample a new puzzle on episode reset.
+    # For meta task, we want to use the same puzzle across episode resets.
+    @abc.abstractmethod
+    def reset(self, params: EnvParamsT, key: jax.Array) -> TimeStep[EnvCarryT]: ...
+
     @abc.abstractmethod
     def _generate_problem(self, params: EnvParamsT, key: jax.Array) -> State[EnvCarryT]: ...
 
-    def _generate_problem_eval(self, params: EnvParamsT, key: jax.Array) -> State[EnvCarryT]:
-        raise NotImplementedError("This method should be implemented by the subclass")
-
-    def eval_reset(self, params: EnvParamsT, key: jax.Array) -> TimeStep[EnvCarryT]:
-        raise NotImplementedError("This method should be implemented by the subclass")
-
-    def reset(self, params: EnvParamsT, key: jax.Array) -> TimeStep[EnvCarryT]:
-        state = self._generate_problem(params, key)
-        timestep = TimeStep(
-            state=state,
-            step_type=StepType.FIRST,
-            reward=jnp.asarray(0.0),
-            discount=jnp.asarray(1.0),
-            # A bit redundant but we want to stick to the original API as much as possible
-            observation=state.puzzle,
-        )
-        return timestep
+    # Eval reset logic can be different from normal reset, because we might want to pass in the full suite of all test
+    # puzzles on every eval.
+    @abc.abstractmethod
+    def eval_reset(self, params: EnvParamsT, key: jax.Array) -> TimeStep[EnvCarryT]: ...
 
     # Why timestep + state at once, and not like in Jumanji? To be able to do autoresets in gym and envpools styles
     def step(self, params: EnvParamsT, timestep: TimeStep[EnvCarryT], action: IntOrArray) -> TimeStep[EnvCarryT]:
@@ -80,7 +72,7 @@ class Environment(abc.ABC, Generic[EnvParamsT, EnvCarryT]):
         assert params.max_steps is not None
         truncated = jnp.equal(new_state.step_num, params.max_steps)
 
-        reward = jax.lax.select(terminated, 10.0, -0.01)
+        reward = jax.lax.select(terminated, SUCCESS_REWARD, STEP_REWARD)
 
         step_type = jax.lax.select(terminated | truncated, StepType.LAST, StepType.MID)
         discount = jax.lax.select(terminated, jnp.asarray(0.0), jnp.asarray(1.0))
@@ -101,82 +93,3 @@ class Environment(abc.ABC, Generic[EnvParamsT, EnvCarryT]):
         #     return text_render(timestep.state.grid, timestep.state.agent)
         else:
             raise RuntimeError("Unknown render mode. Should be one of: ['rgb_array', 'rich_text']")
-
-
-class PushWorldEnvironment(Environment[EnvParams, EnvCarry]):
-    def default_params(self, **kwargs: Any) -> EnvParams:
-        params = EnvParams()
-        params = params.replace(**kwargs)
-        return params
-
-    def _generate_problem(self, params: EnvParams, key: jax.Array) -> State[EnvCarry]:
-        # Create a new state, copy PushWorld from params into it
-        # TODO: Later on, check if we even need to copy or whether we can use the same puzzle
-        # due to how jax works
-        # puzzle_copy = jtu.tree_map(lambda x: x, params.puzzle)
-
-        obs = get_obs_from_puzzle(params.puzzle)
-
-        state = State(
-            key=key,
-            step_num=jnp.asarray(0),
-            puzzle=obs,
-            agent_pos=(params.puzzle.agent - 1),
-            goal_pos=(params.puzzle.goal - 1),
-            carry=EnvCarry(),
-        )
-        return state
-
-
-class PushWorldSingleTaskEnvParams(EnvParams):
-    benchmark: Benchmark = struct.field(pytree_node=True, default=None)
-    type: Literal["train", "test"] = struct.field(pytree_node=False, default="train")
-    eval_puzzle_ids: jax.Array = struct.field(pytree_node=True, default_factory=lambda: jnp.array([]))
-
-
-class PushWorldSingleTaskEnvironment(Environment[PushWorldSingleTaskEnvParams, EnvCarry]):
-    def default_params(self, **kwargs: Any) -> PushWorldSingleTaskEnvParams:
-        params = PushWorldSingleTaskEnvParams()
-        params = params.replace(**kwargs)
-        return params
-
-    def _generate_problem(self, params: PushWorldSingleTaskEnvParams, key: jax.Array) -> State[EnvCarry]:
-        puzzle = params.benchmark.sample_puzzle(key, "train")
-
-        obs = get_obs_from_puzzle(puzzle)
-
-        state = State(
-            key=key,
-            step_num=jnp.asarray(0),
-            puzzle=obs,
-            agent_pos=(puzzle.agent - 1),
-            goal_pos=(puzzle.goal - 1),
-            carry=EnvCarry(),
-        )
-        return state
-
-    def eval_reset(self, params: PushWorldSingleTaskEnvParams, key: jax.Array) -> TimeStep[EnvCarry]:
-        state = self._generate_problem_eval(params, key)
-
-        timestep = TimeStep(
-            state=state,
-            step_type=StepType.FIRST,
-            reward=jnp.asarray(0.0),
-            discount=jnp.asarray(1.0),
-            # A bit redundant but we want to stick to the original API as much as possible
-            observation=state.puzzle,
-        )
-        return timestep
-
-    def _generate_problem_eval(self, params: PushWorldSingleTaskEnvParams, key: jax.Array) -> State[EnvCarry]:
-        obs = get_obs_from_puzzle(params.puzzle)
-
-        state = State(
-            key=key,
-            step_num=jnp.asarray(0),
-            puzzle=obs,
-            agent_pos=(params.puzzle.agent - 1),
-            goal_pos=(params.puzzle.goal - 1),
-            carry=EnvCarry(),
-        )
-        return state

@@ -28,9 +28,6 @@ class Wrapper(Environment[EnvParamsT, EnvCarryT]):
     def _generate_problem(self, params: EnvParamsT, key: jax.Array) -> State[EnvCarryT]:
         return self._env._generate_problem(params, key)
 
-    def _generate_problem_eval(self, params: EnvParamsT, key: jax.Array) -> State[EnvCarryT]:
-        return self._env._generate_problem_eval(params, key)
-
     def reset(self, params: EnvParamsT, key: jax.Array) -> TimeStep[EnvCarryT]:
         return self._env.reset(params, key)
 
