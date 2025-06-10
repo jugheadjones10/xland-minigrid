@@ -25,7 +25,9 @@ IntOrArray: TypeAlias = Union[int, jax.Array]
 GridState: TypeAlias = jax.Array
 
 
-class State(struct.PyTreeNode, Generic[EnvCarryT]):
+# Originally struct.PyTreeNode came first, but we ran into this issue:
+# AttributeError: type object 'TimeStep' has no attribute '__parameters__'
+class State(Generic[EnvCarryT], struct.PyTreeNode):
     key: jax.Array
     step_num: jax.Array
 
@@ -42,7 +44,9 @@ class StepType(jnp.uint8):
     LAST: jax.Array = jnp.asarray(2, dtype=jnp.uint8)
 
 
-class TimeStep(struct.PyTreeNode, Generic[EnvCarryT]):
+# Originally struct.PyTreeNode came first, but we ran into this issue:
+# AttributeError: type object 'TimeStep' has no attribute '__parameters__'
+class TimeStep(Generic[EnvCarryT], struct.PyTreeNode):
     state: State[EnvCarryT]
     step_type: StepType
     reward: jax.Array
