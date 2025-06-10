@@ -4,11 +4,10 @@ import jax
 import jax.numpy as jnp
 from flax import struct
 
-from ...types import StepType
 from ..benchmarks import Benchmark
 from ..environment import Environment, EnvParams
 from ..grid import get_obs_from_puzzle
-from ..types import EnvCarry, PushWorldPuzzle, State, TimeStep
+from ..types import EnvCarry, State, StepType, TimeStep
 
 
 class SingleTaskPushWorldEnvParams(EnvParams):
