@@ -23,8 +23,9 @@ from utils_pushworld import Transition, calculate_gae, ppo_update_networks, roll
 
 import xminigrid.envs.pushworld as pushworld
 from xminigrid.envs.pushworld.benchmarks import Benchmark
-from xminigrid.envs.pushworld.environment import Environment, EnvParams, EnvParamsT, PushWorldEnvironment
-from xminigrid.envs.pushworld.wrappers import GymAutoResetWrapper
+from xminigrid.envs.pushworld.environment import Environment, EnvParams, EnvParamsT
+from xminigrid.envs.pushworld.envs.meta_task_pushworld import MetaTaskPushWorldEnvironment
+from xminigrid.envs.pushworld.wrappers import GoalObservationWrapper, GymAutoResetWrapper
 
 # this will be default in new jax versions anyway
 jax.config.update("jax_threefry_partitionable", True)
@@ -35,9 +36,12 @@ class TrainConfig:
     project: str = "xminigrid"
     group: str = "default"
     name: str = "meta-task-ppo"
-    # env_id: str = "XLand-MiniGrid-R1-9x9"
-    env_id: str = "MiniGrid-EmptyGoalRandom-5x5"
     benchmark_id: str = "level0_mini"
+
+    train_test_same: bool = False
+    num_train: Optional[int] = None
+    num_test: Optional[int] = None
+
     img_obs: bool = False
     # agent
     obs_emb_dim: int = 16
@@ -64,6 +68,8 @@ class TrainConfig:
     eval_num_episodes: int = 10
     eval_seed: int = 42
     train_seed: int = 42
+    # Seed for sampling train and test puzzles if are taking a subset of the benchmark puzzles
+    puzzle_seed: int = 42
     checkpoint_path: Optional[str] = None
 
     def __post_init__(self):
@@ -92,20 +98,46 @@ def make_states(config: TrainConfig):
     # if "XLand" not in config.env_id:
     #     raise ValueError("Only meta-task environments are supported.")
 
-    env = PushWorldEnvironment()
+    env = MetaTaskPushWorldEnvironment()
     env_params = env.default_params()
-
     env = GymAutoResetWrapper(env)
-    # enabling image observations if needed
-    if config.img_obs:
-        pass
-        # from xminigrid.experimental.img_obs import RGBImgObservationWrapper
+    env = GoalObservationWrapper(env)
 
-        # Need to add a PushWorld version for this
-        # env = RGBImgObservationWrapper(env)
+    # enabling image observations if needed
+    # if config.img_obs:
+    #   from xminigrid.experimental.img_obs import RGBImgObservationWrapper
+    # Need to add a PushWorld version for this
+    #   env = RGBImgObservationWrapper(env)
 
     # loading benchmark
     benchmark = pushworld.load_benchmark(config.benchmark_id)
+
+    puzzle_rng = jax.random.key(config.puzzle_seed)
+    train_rng, test_rng = jax.random.split(puzzle_rng)
+
+    if config.num_train is not None:
+        assert (
+            config.num_train <= benchmark.num_train_puzzles()
+        ), "num_train is larger than num train available in benchmark"
+        perm = jax.random.permutation(train_rng, benchmark.num_train_puzzles())
+        idxs = perm[: config.num_train]
+        benchmark = benchmark.replace(train_puzzles=benchmark.train_puzzles[idxs])
+    else:
+        config.num_train = benchmark.num_train_puzzles()
+
+    if config.num_test is not None:
+        assert (
+            config.num_test <= benchmark.num_test_puzzles()
+        ), "num_test is larger than num test available in benchmark"
+        perm = jax.random.permutation(test_rng, benchmark.num_test_puzzles())
+        idxs = perm[: config.num_test]
+        benchmark = benchmark.replace(test_puzzles=benchmark.test_puzzles[idxs])
+    else:
+        config.num_test = benchmark.num_test_puzzles()
+
+    if config.train_test_same:
+        benchmark = benchmark.replace(test_puzzles=benchmark.train_puzzles)
+        config.num_test = config.num_train
 
     # set up training state
     rng = jax.random.key(config.train_seed)
@@ -126,7 +158,8 @@ def make_states(config: TrainConfig):
 
     init_obs = {
         # We add single channel dimension to end of obs_img
-        "obs_img": jnp.zeros((config.num_envs_per_device, 1, *shapes, 1)),
+        "obs_img": jnp.zeros((config.num_envs_per_device, 1, *shapes["img"])),
+        "obs_goal": jnp.zeros((config.num_envs_per_device, 1, shapes["goal"])),
         "prev_action": jnp.zeros((config.num_envs_per_device, 1), dtype=jnp.int32),
         "prev_reward": jnp.zeros((config.num_envs_per_device, 1)),
     }
@@ -170,8 +203,6 @@ def make_train(
             meta_env_params = env_params.replace(puzzle=puzzles)
 
             timestep = jax.vmap(env.reset, in_axes=(0, 0))(meta_env_params, reset_rng)
-            # jax.debug.print("grid state: {timestep}", timestep=timestep.state.grid)
-            # jax.debug.breakpoint()
             prev_action = jnp.zeros(config.num_envs_per_device, dtype=jnp.int32)
             prev_reward = jnp.zeros(config.num_envs_per_device)
 
@@ -188,7 +219,8 @@ def make_train(
                         {
                             # [batch_size, seq_len=1, ...]
                             # We add single channel dimension to end of obs_img
-                            "obs_img": prev_timestep.observation[:, None, ..., None],
+                            "obs_img": prev_timestep.observation["img"][:, None],
+                            "obs_goal": prev_timestep.observation["goal"][:, None],
                             "prev_action": prev_action[:, None],
                             "prev_reward": prev_reward[:, None],
                         },
@@ -207,7 +239,8 @@ def make_train(
                         value=value,
                         reward=timestep.reward,
                         log_prob=log_prob,
-                        obs=prev_timestep.observation[..., None],
+                        obs=prev_timestep.observation["img"],
+                        goal=prev_timestep.observation["goal"],
                         prev_action=prev_action,
                         prev_reward=prev_reward,
                     )
@@ -225,7 +258,8 @@ def make_train(
                     train_state.params,
                     {
                         # We add single channel dimension to end of obs_img
-                        "obs_img": timestep.observation[:, None, ..., None],
+                        "obs_img": timestep.observation["img"][:, None],
+                        "obs_goal": timestep.observation["goal"][:, None],
                         "prev_action": prev_action[:, None],
                         "prev_reward": prev_reward[:, None],
                     },
@@ -287,30 +321,49 @@ def make_train(
             rng, train_state = runner_state[:2]
 
             # EVALUATE AGENT
-            eval_puzzle_rng, eval_reset_rng = jax.random.split(jax.random.key(config.eval_seed))
-            eval_puzzle_rng = jax.random.split(eval_puzzle_rng, num=config.eval_num_envs_per_device)
-            eval_reset_rng = jax.random.split(eval_reset_rng, num=config.eval_num_envs_per_device)
+            eval_reset_rng = jax.random.key(config.eval_seed)
+            eval_test_rng, eval_train_rng = jax.random.split(eval_reset_rng)
+            assert config.num_test is not None, "num_test must be set for evaluation"
+            assert config.num_train is not None, "num_train must be set for evaluation"
 
-            eval_puzzles = jax.vmap(benchmark.sample_puzzle, in_axes=(0, None))(eval_puzzle_rng, "test")
-            eval_env_params = env_params.replace(puzzle=eval_puzzles)
-
-            eval_stats = jax.vmap(rollout, in_axes=(0, None, 0, None, None, None))(
-                eval_reset_rng,
+            # Eval on test set
+            eval_test_reset_rng = jax.random.split(eval_test_rng, num=config.num_test)
+            eval_puzzles = benchmark.get_test_puzzles()
+            eval_stats = jax.vmap(rollout, in_axes=(0, None, None, 0, None, None, None))(
+                eval_test_reset_rng,
                 env,
-                eval_env_params,
+                meta_env_params,
+                eval_puzzles,
                 train_state,
                 eval_hstate,
                 config.eval_num_episodes,
             )
             eval_stats = jax.lax.pmean(eval_stats, axis_name="devices")
 
+            # Eval on train set
+            eval_train_reset_rng = jax.random.split(eval_train_rng, num=config.num_train)
+            eval_train_puzzles = benchmark.get_train_puzzles()
+            eval_train_stats = jax.vmap(rollout, in_axes=(0, None, None, 0, None, None, None))(
+                eval_train_reset_rng,
+                env,
+                meta_env_params,
+                eval_train_puzzles,
+                train_state,
+                eval_hstate,
+                config.eval_num_episodes,
+            )
+            eval_train_stats = jax.lax.pmean(eval_train_stats, axis_name="devices")
+
             # averaging over inner updates, adding evaluation metrics
             loss_info = jtu.tree_map(lambda x: x.mean(-1), loss_info)
             loss_info.update(
                 {
                     "eval/returns_mean": eval_stats.reward.mean(0),
+                    "eval/returns_mean_train": eval_train_stats.reward.mean(0),
                     "eval/returns_median": jnp.median(eval_stats.reward),
                     "eval/lengths": eval_stats.length.mean(0),
+                    "eval/solved_percentage": eval_stats.solved.sum(0) / config.num_test,
+                    "eval/solved_percentage_train": eval_train_stats.solved.sum(0) / config.num_train,
                     "eval/lengths_20percentile": jnp.percentile(eval_stats.length, q=20),
                     "eval/returns_20percentile": jnp.percentile(eval_stats.reward, q=20),
                     "lr": train_state.opt_state[-1].hyperparams["learning_rate"],

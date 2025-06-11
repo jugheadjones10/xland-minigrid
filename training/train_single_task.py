@@ -147,22 +147,13 @@ def make_train(
         prev_action = jnp.zeros(config.num_envs_per_device, dtype=jnp.int32)
         prev_reward = jnp.zeros(config.num_envs_per_device)
 
-        # jax.debug.print("prev_reward shape: {}", prev_reward.shape)
-        # jax.debug.print("prev_action shape: {}", prev_action.shape)
-        # jax.debug.breakpoint()
-
         # TRAIN LOOP
         def _update_step(runner_state, update_idx):
-            jax.debug.print("Update step: {}", update_idx)
+            # jax.debug.print("Update step: {}", update_idx)
 
             # COLLECT TRAJECTORIES
             def _env_step(runner_state, _):
                 rng, train_state, prev_timestep, prev_action, prev_reward, prev_hstate = runner_state
-
-                # jax.debug.print("prev_observation image shape: {}", prev_timestep.observation["img"].shape)
-                # jax.debug.print("prev_observation direction shape: {}", prev_timestep.observation["direction"].shape)
-                # jax.debug.print("prev_action shape: {}", prev_action.shape)
-                # jax.debug.print("prev_reward shape: {}", prev_reward.shape)
 
                 # SELECT ACTION
                 rng, _rng = jax.random.split(rng)
@@ -198,7 +189,6 @@ def make_train(
                 return runner_state, transition
 
             initial_hstate = runner_state[-1]
-            # jax.debug.print("initial_hstate shape: {}", initial_hstate.shape)
             # transitions: [seq_len, batch_size, ...]
             runner_state, transitions = jax.lax.scan(_env_step, runner_state, None, config.num_steps)
 
@@ -215,6 +205,7 @@ def make_train(
                 },
                 hstate,
             )
+            # [seq_len, batch_size]
             advantages, targets = calculate_gae(transitions, last_val.squeeze(1), config.gamma, config.gae_lambda)
 
             # UPDATE NETWORK
@@ -239,6 +230,7 @@ def make_train(
                 rng, _rng = jax.random.split(rng)
                 permutation = jax.random.permutation(_rng, config.num_envs_per_device)
                 # [seq_len, batch_size, ...]
+                # init_hstate has seq_len 1 while the rest have seq_len equal to config.num_steps
                 batch = (init_hstate, transitions, advantages, targets)
                 # [batch_size, seq_len, ...], as our model assumes
                 batch = jtu.tree_map(lambda x: x.swapaxes(0, 1), batch)
@@ -248,6 +240,7 @@ def make_train(
                 minibatches = jtu.tree_map(
                     lambda x: jnp.reshape(x, (config.num_minibatches, -1) + x.shape[1:]), shuffled_batch
                 )
+                # update_info: pytree with array leaves of length num_minibatches
                 train_state, update_info = jax.lax.scan(_update_minbatch, train_state, minibatches)
 
                 update_state = (rng, train_state, init_hstate, transitions, advantages, targets)
@@ -256,6 +249,7 @@ def make_train(
             # [seq_len, batch_size, num_layers, hidden_dim]
             init_hstate = initial_hstate[None, :]
             update_state = (rng, train_state, init_hstate, transitions, advantages, targets)
+            # loss_info: pytree with array leaves of shape [update_epochs, num_minibatches]
             update_state, loss_info = jax.lax.scan(_update_epoch, update_state, None, config.update_epochs)
 
             # averaging over minibatches then over epochs
@@ -277,8 +271,6 @@ def make_train(
                 1,
             )
             eval_stats = jax.lax.pmean(eval_stats, axis_name="devices")
-            # jax.debug.print("eval_stats: {}", eval_stats)
-            # jax.debug.breakpoint()
             loss_info.update(
                 {
                     "eval/returns": eval_stats.reward.mean(0),
@@ -289,8 +281,6 @@ def make_train(
             runner_state = (rng, train_state, timestep, prev_action, prev_reward, hstate)
             return runner_state, loss_info
 
-        # jax.debug.print("Config num updates: {}", config.num_updates)
-        # jax.debug.breakpoint()
         runner_state = (rng, train_state, timestep, prev_action, prev_reward, init_hstate)
         # Create a sequence of numbers from 0 to num_updates-1 for progress tracking
         update_indices = jnp.arange(config.num_updates)
@@ -312,14 +302,6 @@ def train(config: TrainConfig):
     )
 
     rng, env, env_params, init_hstate, train_state = make_states(config)
-    # Print all the variables in a readable format
-    # print(f"rng: {rng}")
-    # print(f"env: {env}")
-    # print(f"env_params: {env_params}")
-    # print(f"init_hstate: {init_hstate.shape}")
-    # Print TrainState keys
-    # print("\nTrainState keys:", train_state.__dict__.keys())
-    # jax.debug.breakpoint()
 
     # replicating args across devices
     rng = jax.random.split(rng, num=jax.local_device_count())

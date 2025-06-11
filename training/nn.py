@@ -239,6 +239,7 @@ class ActorCriticRNN(nn.Module):
         dist = distrax.Categorical(logits=logits)
         values = critic(out)
 
+        # [batch_size, seq_len, num_actions], [batch_size, seq_len], [batch_size, rnn_num_layers, rnn_hidden_dim]
         return dist, jnp.squeeze(values, axis=-1), new_hidden
 
     def initialize_carry(self, batch_size):

@@ -4,7 +4,9 @@ import jax.numpy as jnp
 from flax import struct
 from flax.training.train_state import TrainState
 
+from xminigrid.envs.pushworld.constants import SUCCESS_REWARD
 from xminigrid.envs.pushworld.environment import Environment, EnvParams
+from xminigrid.envs.pushworld.types import PushWorldPuzzle
 
 
 # Training stuff
@@ -110,12 +112,14 @@ class RolloutStats(struct.PyTreeNode):
     reward: jax.Array = struct.field(default_factory=lambda: jnp.asarray(0.0))
     length: jax.Array = struct.field(default_factory=lambda: jnp.asarray(0))
     episodes: jax.Array = struct.field(default_factory=lambda: jnp.asarray(0))
+    solved: jax.Array = struct.field(default_factory=lambda: jnp.asarray(0))
 
 
 def rollout(
     rng: jax.Array,
     env: Environment,
     env_params: EnvParams,
+    eval_puzzle: PushWorldPuzzle,
     train_state: TrainState,
     init_hstate: jax.Array,
     num_consecutive_episodes: int = 1,
@@ -142,15 +146,18 @@ def rollout(
         action = dist.sample(seed=_rng).squeeze()
         timestep = env.step(env_params, timestep, action)
 
+        solved_flag = ((timestep.reward == SUCCESS_REWARD) & (timestep.last() == 1)).astype(jnp.int32)
         stats = stats.replace(
             reward=stats.reward + timestep.reward,
             length=stats.length + 1,
             episodes=stats.episodes + timestep.last(),
+            solved=solved_flag,
         )
         carry = (rng, stats, timestep, action, timestep.reward, hstate)
         return carry
 
-    timestep = env.reset(env_params, rng)
+    env_params = env_params.replace(puzzle=eval_puzzle)
+    timestep = env.eval_reset(env_params, rng)
     prev_action = jnp.asarray(0)
     prev_reward = jnp.asarray(0)
     init_carry = (rng, RolloutStats(), timestep, prev_action, prev_reward, init_hstate)

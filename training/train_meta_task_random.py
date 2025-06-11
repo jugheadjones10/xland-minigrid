@@ -1,3 +1,4 @@
+# Might not be up-to-date with the experiment notebook running this at experiments/train_meta_empty_minigrid.ipynb
 # Adapted from PureJaxRL implementation and minigrid baselines, source:
 # https://github.com/lupuandr/explainable-policies/blob/50acbd777dc7c6d6b8b7255cd1249e81715bcb54/purejaxrl/ppo_rnn.py#L4
 # https://github.com/lcswillems/rl-starter-files/blob/master/model.py
