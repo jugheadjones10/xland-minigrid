@@ -2,6 +2,7 @@
 # https://github.com/lupuandr/explainable-policies/blob/50acbd777dc7c6d6b8b7255cd1249e81715bcb54/purejaxrl/ppo_rnn.py#L4
 # https://github.com/lcswillems/rl-starter-files/blob/master/model.py
 import os
+import shutil
 import time
 from dataclasses import asdict, dataclass
 from functools import partial
@@ -13,28 +14,23 @@ import jax.numpy as jnp
 import jax.tree_util as jtu
 import numpy as np
 import optax
+import orbax
 import pyrallis
 import wandb
 from flax.jax_utils import replicate, unreplicate
+from flax.training import orbax_utils
 from flax.training.train_state import TrainState
 from nn_pushworld import ActorCriticRNN
 from utils_pushworld import Transition, calculate_gae, ppo_update_networks, rollout
 
-# import xminigrid
-# from xminigrid.environment import Environment, EnvParams
-# from xminigrid.wrappers import DirectionObservationWrapper, GymAutoResetWrapper
 import xminigrid.envs.pushworld as pushworld
 from xminigrid.envs.pushworld.benchmarks import Benchmark
-from xminigrid.envs.pushworld.constants import Tiles
 from xminigrid.envs.pushworld.environment import Environment, EnvParams, EnvParamsT
 from xminigrid.envs.pushworld.envs.single_task_pushworld import SingleTaskPushWorldEnvironment
-from xminigrid.envs.pushworld.scripts.upload import encode_puzzle
 from xminigrid.envs.pushworld.wrappers import GoalObservationWrapper, GymAutoResetWrapper
 
 # this will be default in new jax versions anyway
-jax.config.update("jax_threefry_partitionable", True)
-
-TEST_PUZZLES_DIR = "/Users/kimyoungjin/Projects/monkey/xland-minigrid/src/xminigrid/envs/pushworld/test_puzzles"
+# jax.config.update("jax_threefry_partitionable", True)
 
 
 @dataclass
@@ -43,6 +39,11 @@ class TrainConfig:
     group: str = "default"
     name: str = "single-task-ppo-pushworld"
     benchmark_id: str = "level0_mini"
+    # If True, track the training progress to wandb
+    track: bool = False
+    checkpoint_path: Optional[str] = None
+    # Upload to W&B
+    upload_model: bool = False
 
     # If True, test puzzles are duplicated from train puzzles
     train_test_same: bool = False
@@ -100,10 +101,6 @@ def make_states(config: TrainConfig):
     env = GoalObservationWrapper(env)
 
     benchmark = pushworld.load_benchmark(config.benchmark_id)
-    # benchmark = Benchmark(
-    #     train_puzzles=jnp.array([encode_puzzle(os.path.join(TEST_PUZZLES_DIR, "test_puzzle.pwp"))]),
-    #     test_puzzles=jnp.array([encode_puzzle(os.path.join(TEST_PUZZLES_DIR, "test_puzzle.pwp"))]),
-    # )
 
     puzzle_rng = jax.random.key(config.puzzle_seed)
     train_rng, test_rng = jax.random.split(puzzle_rng)
@@ -302,6 +299,8 @@ def make_train(
             rng, train_state = update_state[:2]
 
             # EVALUATE AGENT
+            assert config.num_test is not None, "num_test must be set for evaluation"
+            assert config.num_train is not None, "num_train must be set for evaluation"
             rng, _rng = jax.random.split(rng)
             eval_rng = jax.random.split(_rng, num=config.num_test)
 
@@ -334,21 +333,15 @@ def make_train(
         # Create a sequence of numbers from 0 to num_updates-1 for progress tracking
         update_indices = jnp.arange(config.num_updates)
         runner_state, loss_info = jax.lax.scan(_update_step, runner_state, update_indices, config.num_updates)
-        return {"runner_state": runner_state, "loss_info": loss_info}
+        return {"runner_state": runner_state[1], "loss_info": loss_info}
 
     return train
 
 
-@pyrallis.wrap()
 def train(config: TrainConfig):
-    # logging to wandb
-    run = wandb.init(
-        project=config.project,
-        group=config.group,
-        name=config.name,
-        config=asdict(config),
-        save_code=True,
-    )
+    # removing existing checkpoints if any
+    if config.checkpoint_path is not None and os.path.exists(config.checkpoint_path):
+        shutil.rmtree(config.checkpoint_path)
 
     rng, env, env_params, benchmark, init_hstate, train_state = make_states(config)
 
@@ -370,23 +363,60 @@ def train(config: TrainConfig):
     elapsed_time = time.time() - t
     print(f"Done in {elapsed_time:.2f}s")
 
+    return unreplicate(train_info), elapsed_time
+
+
+def processing(config: TrainConfig, train_info, elapsed_time):
     print("Logging...")
-    loss_info = unreplicate(train_info["loss_info"])
+    loss_info = train_info["loss_info"]
 
-    total_transitions = 0
-    for i in range(config.num_updates):
-        # summing total transitions per update from all devices
-        total_transitions += config.num_steps * config.num_envs_per_device * jax.local_device_count()
-        info = jtu.tree_map(lambda x: x[i].item(), loss_info)
-        info["transitions"] = total_transitions
-        wandb.log(info)
+    if config.track or config.upload_model:
+        run = wandb.init(
+            project=config.project,
+            group=config.group,
+            name=config.name,
+            config=asdict(config),
+            save_code=True,
+        )
 
-    run.summary["training_time"] = elapsed_time
-    run.summary["steps_per_second"] = (config.total_timesteps_per_device * jax.local_device_count()) / elapsed_time
+    if config.track:
+        total_transitions = 0
+        for i in range(config.num_updates):
+            # summing total transitions per update from all devices
+            total_transitions += config.num_steps * config.num_envs_per_device * jax.local_device_count()
+            info = jtu.tree_map(lambda x: x[i].item(), loss_info)
+            info["transitions"] = total_transitions
+            wandb.log(info)
+
+        run.summary["training_time"] = elapsed_time
+        run.summary["steps_per_second"] = (config.total_timesteps_per_device * jax.local_device_count()) / elapsed_time
+
+    if config.checkpoint_path is not None:
+        checkpoint = {"config": asdict(config), "params": train_info["runner_state"].params}
+        orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
+        save_args = orbax_utils.save_args_from_target(checkpoint)
+        orbax_checkpointer.save(config.checkpoint_path, checkpoint, save_args=save_args)
+
+        if config.upload_model:
+            # Upload to W&B as artifact
+            artifact = wandb.Artifact(
+                name=f"model-checkpoint-{run.id}", type="model", description="Trained model checkpoint"
+            )
+            artifact.add_dir(config.checkpoint_path)  # Add entire checkpoint directory
+            run.log_artifact(artifact)
+
+    if config.track or config.upload_model:
+        run.finish()
 
     print("Final return: ", float(loss_info["eval/returns"][-1]))
-    run.finish()
+    print("Final solved percentage: ", float(loss_info["eval/solved_percentage"][-1]))
+
+
+@pyrallis.wrap()
+def main(config: TrainConfig):
+    train_info, elapsed_time = train(config)
+    processing(config, train_info, elapsed_time)
 
 
 if __name__ == "__main__":
-    train()
+    main()

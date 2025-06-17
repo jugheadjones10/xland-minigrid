@@ -19,7 +19,14 @@ from flax.jax_utils import replicate, unreplicate
 from flax.training import orbax_utils
 from flax.training.train_state import TrainState
 from nn_pushworld import ActorCriticRNN
-from utils_pushworld import Transition, calculate_gae, ppo_update_networks, rollout
+from utils_pushworld import (
+    MetaRolloutStats,
+    Transition,
+    calculate_gae,
+    meta_rollout,
+    ppo_update_networks,
+    rollout,
+)
 
 import xminigrid.envs.pushworld as pushworld
 from xminigrid.envs.pushworld.benchmarks import Benchmark
@@ -37,6 +44,11 @@ class TrainConfig:
     group: str = "default"
     name: str = "meta-task-ppo"
     benchmark_id: str = "level0_mini"
+    # If True, track the training progress to wandb
+    track: bool = False
+    checkpoint_path: Optional[str] = None
+    # Upload to W&B
+    upload_model: bool = False
 
     train_test_same: bool = False
     num_train: Optional[int] = None
@@ -329,7 +341,7 @@ def make_train(
             # Eval on test set
             eval_test_reset_rng = jax.random.split(eval_test_rng, num=config.num_test)
             eval_puzzles = benchmark.get_test_puzzles()
-            eval_stats = jax.vmap(rollout, in_axes=(0, None, None, 0, None, None, None))(
+            eval_stats = jax.vmap(meta_rollout, in_axes=(0, None, None, 0, None, None, None))(
                 eval_test_reset_rng,
                 env,
                 meta_env_params,
@@ -343,7 +355,7 @@ def make_train(
             # Eval on train set
             eval_train_reset_rng = jax.random.split(eval_train_rng, num=config.num_train)
             eval_train_puzzles = benchmark.get_train_puzzles()
-            eval_train_stats = jax.vmap(rollout, in_axes=(0, None, None, 0, None, None, None))(
+            eval_train_stats = jax.vmap(meta_rollout, in_axes=(0, None, None, 0, None, None, None))(
                 eval_train_reset_rng,
                 env,
                 meta_env_params,
@@ -356,19 +368,26 @@ def make_train(
 
             # averaging over inner updates, adding evaluation metrics
             loss_info = jtu.tree_map(lambda x: x.mean(-1), loss_info)
+
             loss_info.update(
                 {
-                    "eval/returns_mean": eval_stats.reward.mean(0),
-                    "eval/returns_mean_train": eval_train_stats.reward.mean(0),
-                    "eval/returns_median": jnp.median(eval_stats.reward),
-                    "eval/lengths": eval_stats.length.mean(0),
-                    "eval/solved_percentage": eval_stats.solved.sum(0) / config.num_test,
-                    "eval/solved_percentage_train": eval_train_stats.solved.sum(0) / config.num_train,
-                    "eval/lengths_20percentile": jnp.percentile(eval_stats.length, q=20),
-                    "eval/returns_20percentile": jnp.percentile(eval_stats.reward, q=20),
+                    "eval/returns_mean": eval_stats.total_reward.mean() / config.eval_num_episodes,
+                    "eval/returns_mean_train": eval_train_stats.total_reward.mean() / config.eval_num_episodes,
+                    "eval/returns_median": jnp.median(eval_stats.total_reward) / config.eval_num_episodes,
+                    "eval/lengths": eval_stats.episode_lengths.mean(),
+                    "eval/solved_percentage": eval_stats.episode_solved.mean(),
+                    "eval/solved_percentage_train": eval_train_stats.episode_solved.mean(),
+                    "eval/lengths_20percentile": jnp.percentile(eval_stats.episode_lengths, q=20),
+                    "eval/returns_20percentile": jnp.percentile(eval_stats.total_reward, q=20),
                     "lr": train_state.opt_state[-1].hyperparams["learning_rate"],
+                    # Store episode arrays - we'll convert to individual metrics outside JIT
+                    "eval/episode_rewards": eval_stats.episode_rewards.mean(axis=0),
+                    "eval/episode_solved_rates": eval_stats.episode_solved.mean(axis=0),
+                    "eval_train/episode_rewards": eval_train_stats.episode_rewards.mean(axis=0),
+                    "eval_train/episode_solved_rates": eval_train_stats.episode_solved.mean(axis=0),
                 }
             )
+
             meta_state = (rng, train_state)
             return meta_state, loss_info
 
@@ -379,16 +398,7 @@ def make_train(
     return train
 
 
-@pyrallis.wrap()
 def train(config: TrainConfig):
-    # logging to wandb
-    run = wandb.init(
-        project=config.project,
-        group=config.group,
-        name=config.name,
-        config=asdict(config),
-        save_code=True,
-    )
     # removing existing checkpoints if any
     if config.checkpoint_path is not None and os.path.exists(config.checkpoint_path):
         shutil.rmtree(config.checkpoint_path)
@@ -412,28 +422,77 @@ def train(config: TrainConfig):
     elapsed_time = time.time() - t
     print(f"Done in {elapsed_time:.2f}s.")
 
+    return unreplicate(train_info), elapsed_time
+
+
+def processing(config: TrainConfig, train_info, elapsed_time):
     print("Logginig...")
-    loss_info = unreplicate(train_info["loss_info"])
+    loss_info = train_info["loss_info"]
 
-    total_transitions = 0
-    for i in range(config.num_meta_updates):
-        total_transitions += config.num_steps_per_env * config.num_envs_per_device * jax.local_device_count()
-        info = jtu.tree_map(lambda x: x[i].item(), loss_info)
-        info["transitions"] = total_transitions
-        wandb.log(info)
+    if config.track or config.upload_model:
+        run = wandb.init(
+            project=config.project,
+            group=config.group,
+            name=config.name,
+            config=asdict(config),
+            save_code=True,
+        )
 
-    run.summary["training_time"] = elapsed_time
-    run.summary["steps_per_second"] = (config.total_timesteps_per_device * jax.local_device_count()) / elapsed_time
+    if config.track:
+        total_transitions = 0
+        for i in range(config.num_meta_updates):
+            total_transitions += config.num_steps_per_env * config.num_envs_per_device * jax.local_device_count()
+            info = jtu.tree_map(lambda x: x[i].item(), loss_info)
+            info["transitions"] = total_transitions
+
+            # Add individual per-episode metrics from the arrays
+            if "eval/episode_rewards" in info:
+                episode_rewards = info.pop("eval/episode_rewards")
+                episode_solved_rates = info.pop("eval/episode_solved_rates")
+                train_episode_rewards = info.pop("eval_train/episode_rewards")
+                train_episode_solved_rates = info.pop("eval_train/episode_solved_rates")
+
+                # Convert arrays to individual metrics
+                for episode_idx in range(config.eval_num_episodes):
+                    info[f"eval/episode_{episode_idx}_reward_mean"] = float(episode_rewards[episode_idx])
+                    info[f"eval/episode_{episode_idx}_solved_rate"] = float(episode_solved_rates[episode_idx])
+                    info[f"eval_train/episode_{episode_idx}_reward_mean"] = float(train_episode_rewards[episode_idx])
+                    info[f"eval_train/episode_{episode_idx}_solved_rate"] = float(
+                        train_episode_solved_rates[episode_idx]
+                    )
+            wandb.log(info)
+
+        run.summary["training_time"] = elapsed_time
+        run.summary["steps_per_second"] = (config.total_timesteps_per_device * jax.local_device_count()) / elapsed_time
 
     if config.checkpoint_path is not None:
-        checkpoint = {"config": asdict(config), "params": unreplicate(train_info)["state"].params}
+        checkpoint = {"config": asdict(config), "params": train_info["state"].params}
         orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
         save_args = orbax_utils.save_args_from_target(checkpoint)
         orbax_checkpointer.save(config.checkpoint_path, checkpoint, save_args=save_args)
 
-    print("Final return: ", float(loss_info["eval/returns_mean"][-1]))
-    run.finish()
+        if config.upload_model:
+            # Upload to W&B as artifact
+            artifact = wandb.Artifact(
+                name=f"model-checkpoint-{run.id}", type="model", description="Trained model checkpoint"
+            )
+            artifact.add_dir(config.checkpoint_path)  # Add entire checkpoint directory
+            run.log_artifact(artifact)
+
+    if config.track or config.upload_model:
+        run.finish()
+
+    print("Final test return: ", float(loss_info["eval/returns_mean"][-1]))
+    print("Final train return: ", float(loss_info["eval/returns_mean_train"][-1]))
+    print("Final test solve rate: ", float(loss_info["eval/solved_percentage"][-1]))
+    print("Final train solve rate: ", float(loss_info["eval/solved_percentage_train"][-1]))
+
+
+@pyrallis.wrap()
+def main(config: TrainConfig):
+    train_info, elapsed_time = train(config)
+    processing(config, train_info, elapsed_time)
 
 
 if __name__ == "__main__":
-    train()
+    main()
