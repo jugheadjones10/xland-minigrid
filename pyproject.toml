@@ -8,6 +8,7 @@ authors = [
   {name = "Alexander Nikulin", email = "a.p.nikulin@tinkoff.ai"},
 ]
 dynamic = ["version"]
+version = "0.1.0"
 
 keywords = [
     "jax",
@@ -40,6 +41,8 @@ dependencies = [
     "chex>=0.1.85",
     "imageio>=2.31.2",
     "imageio-ffmpeg>=0.4.9",
+    "libcst (>=1.8.2,<2.0.0)",
+    "nbformat (>=5.10.4,<6.0.0)",
 ]
 
 [project.optional-dependencies]
