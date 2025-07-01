@@ -26,76 +26,6 @@ ID_TO_CHANNEL = {
 }
 
 
-def move(observation: jax.Array, state: StateAll, displacement: jax.Array) -> StateAll:
-    frontier = ["a"]
-    pushed = set()
-
-    while len(frontier) > 0:
-        movable_idx = frontier.pop()
-        movable_coords = getattr(state, movable_idx)
-
-        displaced_coords = []
-        for coord in movable_coords:
-            if jnp.all(coord != -1):
-                new_coord = coord + displacement
-                displaced_coords.append(new_coord)
-
-        # Check if wall
-        walls_channel = observation[..., ID_TO_CHANNEL["w"]]
-
-        for coord in displaced_coords:
-            if walls_channel[coord[1], coord[0]] == 1:
-                # Transitive stopping; nothing can move
-                return state
-
-        # Check if any displaced coords are out of bounds
-        for coord in displaced_coords:
-            is_in_bounds = jnp.logical_and(
-                # jnp.logical_and(coord[0] >= 0, coord[0] < LEVEL0_ALL_SIZE),
-                # jnp.logical_and(coord[1] >= 0, coord[1] < LEVEL0_ALL_SIZE),
-                jnp.logical_and(coord[1] >= 0, coord[1] < observation.shape[0]),
-                jnp.logical_and(coord[0] >= 0, coord[0] < observation.shape[1]),
-            )
-            if not is_in_bounds:
-                # Out of bounds; nothing can move
-                return state
-
-        # Check for other movables in the way
-        for movable_idx in ["m1", "m2", "m3", "m4"]:
-            if movable_idx in pushed:
-                continue
-
-            movable_channel = observation[..., ID_TO_CHANNEL[movable_idx]]
-
-            # Check if any of the displaced coordinates collide with this movable
-            if len(displaced_coords) > 0:
-                # Convert list of coordinates to array for vectorized access
-                coords_array = jnp.stack(displaced_coords)  # Shape: (n_coords, 2)
-                x_coords = coords_array[:, 0]  # All x coordinates
-                y_coords = coords_array[:, 1]  # All y coordinates
-
-                # Check all positions at once using advanced indexing
-                # Note: arrays are indexed as [y, x] since coords are [x, y] pairs
-                values = movable_channel[y_coords, x_coords]
-                if jnp.any(values == 1):
-                    frontier.append(movable_idx)
-                    pushed.add(movable_idx)
-
-    # Apply displacements to all moved objects
-    # If there was a wall or something in the way, we would have returned early.
-    # The fact that we're here means that the agent can move.
-    pushed.add("a")
-    for moved in pushed:
-        moved_coords = getattr(state, moved)
-        for i, coord in enumerate(moved_coords):
-            if jnp.all(coord != -1):
-                new_coord = coord + displacement
-                moved_coords = moved_coords.at[i].set(new_coord)
-        setattr(state, moved, moved_coords)
-
-    return state
-
-
 def take_action_all(observation: jax.Array, state: StateAll, action: IntOrArray) -> StateAll:
     # observation: one-hot encoding of all the different objects in the grid. Stack of 8 channels.
 
@@ -214,63 +144,93 @@ def move_jax_masked(observation, state: StateAll, displacement):
     frontier = jnp.array([True] + [False] * (N - 1))
     # pushed mask: mark agent as already “pushed” so we don’t revisit it
     pushed = jnp.zeros((N,), dtype=bool).at[0].set(True)
+    # broken flag: set to True if any frontier step hits wall/OOB
+    broken = False
 
     def cond_fn(carry):
-        frontier, pushed = carry
+        frontier, pushed, broken = carry
         # keep going while there is at least one index in the frontier
         return frontier.any()
 
-    def body_fn(carry):
-        frontier, pushed = carry
+    # compute one‐step displacements + valid‐pixel mask for every object
+    all_disp, all_valid = jax.vmap(masked_displacement, in_axes=(0, None))(coords, displacement)
+    # all_disp:  (N, max_pix, 2)
+    # all_valid: (N, max_pix)
 
-        # compute one‐step displacements + valid‐pixel mask for every object
-        all_disp, all_valid = jax.vmap(masked_displacement, in_axes=(0, None))(coords, displacement)
-        # all_disp:  (N, max_pix, 2)
-        # all_valid: (N, max_pix)
+    def body_fn(carry):
+        frontier, pushed, broken = carry
 
         # --- detect any wall or OOB hits for objects in the frontier ---
         ys = all_disp[..., 1]
         xs = all_disp[..., 0]
-        safe_ys = jnp.where(all_valid, ys, 0)
-        safe_xs = jnp.where(all_valid, xs, 0)
-        raw_vals = walls[safe_ys, safe_xs]  # (N, max_pix)
+        raw_vals = walls[ys, xs]  # (N, max_pix)
         wall_vals = jnp.where(all_valid, raw_vals, 0)
         hit_wall = jnp.any(wall_vals == 1, axis=1)  # (N,)
 
-        inb = (safe_xs >= 0) & (safe_xs < walls.shape[1]) & (safe_ys >= 0) & (safe_ys < walls.shape[0])
-        oob = ~jnp.all(jnp.where(all_valid, inb, True), axis=1)  # (N,)
+        inb = (xs >= 0) & (xs < walls.shape[1]) & (ys >= 0) & (ys < walls.shape[0])
+        valid_inb = jnp.where(all_valid, inb, True)
+        oob = ~jnp.all(valid_inb, axis=1)  # (N,)
 
         blocked = hit_wall | oob  # (N,)
         # if any frontier object is blocked, kill the wavefront entirely
         blocked_any = jnp.any(blocked & frontier)
-        frontier = jnp.where(blocked_any, jnp.zeros_like(frontier), frontier)
+
+        # record that we “broke” if the agent (frontier[0]) hit something
+        broken = broken | blocked_any
 
         # --- compute collision graph: which objects touch which after move ---
-        # eq: (N, max_pix, 1, 2) == (1,   N,     max_pix, 2)
-        eq = all_disp[:, :, None, :] == coords[None, :, :, :]
-        # pixel_match: (N, max_pix, N), then reduce over pixels
-        coll_mat = jnp.any(jnp.all(eq, axis=-1), axis=1)  # (N, N)
+        # collision-graph: for each i,j, do any pixels match?
+        # — broadcast all_disp vs coords to compare ALL pixel combinations —
+        eq = all_disp[:, :, None, None, :] == coords[None, None, :, :, :]
+        # eq: (N, max_pix, N, max_pix, 2)
+        # eq[i, p_i, j, p_j, coord]: Does moving object i's pixel p_i match stationary object j's pixel p_j?
+
+        pixel_eq = jnp.all(eq, axis=-1)  # (N, max_pix, N, max_pix) - both x and y match
+
+        # Mask out invalid pixels: only consider collisions between valid pixels
+        # all_valid: (N, max_pix) - which pixels are valid for each object
+        valid_i = all_valid[:, :, None, None]  # (N, max_pix, 1, 1) - valid pixels for moving objects
+        valid_j = all_valid[None, None, :, :]  # (1, 1, N, max_pix) - valid pixels for stationary objects
+
+        # Only count collision if BOTH pixels are valid, this is to make sure we don't count
+        # collisions between sentinel pixels ((-1, -1)).
+        valid_collision = pixel_eq & valid_i & valid_j  # (N, max_pix, N, max_pix)
+
+        # Check if ANY pixel combination results in collision
+        coll_mat = jnp.any(valid_collision, axis=(1, 3))  # (N, N)
 
         # any neighbor collisions coming out of the current frontier
-        neighbors = jnp.any(coll_mat * frontier[:, None], axis=0)  # (N,)
+        frontier_mat = frontier[:, None]  # (N, 1)
+        neighbors = jnp.any(coll_mat * frontier_mat, axis=0)  # (N,)
 
         # new wavefront: hit neighbors we haven't yet pushed
         new_frontier = neighbors & (~pushed)
         pushed = pushed | new_frontier
 
-        # if blocked_any is True, we've already zeroed out frontier above
-        frontier = new_frontier & (~blocked_any)
+        # if we didn’t block this iteration, frontier moves on
+        frontier = jnp.where(blocked_any, jnp.zeros_like(frontier), new_frontier)
 
-        return frontier, pushed
+        return frontier, pushed, broken
 
     # run the masked‐wavefront until no new hits
-    final_frontier, final_pushed = lax.while_loop(cond_fn, body_fn, (frontier, pushed))
-    moved_ok = final_pushed[0]
+    final_frontier, final_pushed, final_broken = lax.while_loop(cond_fn, body_fn, (frontier, pushed, broken))
+
+    # For debugging:
+    # carry = (frontier, pushed, broken)
+    # while cond_fn(carry):
+    #     carry = body_fn(carry)
+    # final_frontier, final_pushed, final_broken = carry
+
+    # agent moved OK only if it was ever “pushed” AND we never “broke”
+    moved_ok = final_pushed[0] & (~final_broken)
 
     # apply the push to all objects in one shot
     def do_push(st):
-        all_disp, all_valid = jax.vmap(masked_displacement, in_axes=(0, None))(coords, displacement)
-        moved = jnp.where(all_valid[:, :, None], all_disp, coords)
+        # Only move objects that are part of the push chain
+        # (masked_displacement already handles invalid pixels correctly)
+        should_move = final_pushed[:, None]  # (N, max_pix)
+        moved = jnp.where(should_move[:, :, None], all_disp, coords)
+
         return st.replace(
             a=moved[0],
             m1=moved[1],
@@ -281,3 +241,9 @@ def move_jax_masked(observation, state: StateAll, displacement):
 
     # if the agent (idx 0) made it through, perform the move; otherwise leave state unchanged
     return lax.cond(moved_ok, do_push, lambda st: st, state)
+
+    # For debugging:
+    # if moved_ok:
+    #     return do_push(state)
+    # else:
+    #     return state
