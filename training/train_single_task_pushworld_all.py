@@ -24,7 +24,7 @@ from nn_pushworld import ActorCriticRNN
 from utils_pushworld_all import Transition, calculate_gae, ppo_update_networks, rollout
 
 import xminigrid.envs.pushworld as pushworld
-from xminigrid.envs.pushworld.benchmarks import Benchmark
+from xminigrid.envs.pushworld.benchmarks import BenchmarkAll
 from xminigrid.envs.pushworld.environment import Environment, EnvParams, EnvParamsT
 from xminigrid.envs.pushworld.envs.single_task_all_pushworld import SingleTaskPushWorldEnvironmentAll
 from xminigrid.envs.pushworld.wrappers import GymAutoResetWrapper
@@ -99,7 +99,7 @@ def make_states(config: TrainConfig):
     env_params = env.default_params()
     env = GymAutoResetWrapper(env)
 
-    benchmark = pushworld.load_benchmark(config.benchmark_id)
+    benchmark = pushworld.load_all_benchmark(config.benchmark_id)
 
     puzzle_rng = jax.random.key(config.puzzle_seed)
     train_rng, test_rng = jax.random.split(puzzle_rng)
@@ -171,7 +171,7 @@ def make_states(config: TrainConfig):
 def make_train(
     env: Environment,
     env_params: EnvParams,
-    benchmark: Benchmark,
+    benchmark: BenchmarkAll,
     config: TrainConfig,
 ):
     @partial(jax.pmap, axis_name="devices")

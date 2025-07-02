@@ -6,7 +6,7 @@ from flax.training.train_state import TrainState
 
 from xminigrid.envs.pushworld.constants import SUCCESS_REWARD
 from xminigrid.envs.pushworld.environment import Environment, EnvParams
-from xminigrid.envs.pushworld.types import PushWorldPuzzle
+from xminigrid.envs.pushworld.types import PushWorldPuzzleAll
 
 
 # Training stuff
@@ -126,7 +126,7 @@ def rollout(
     rng: jax.Array,
     env: Environment,
     env_params: EnvParams,
-    eval_puzzle: PushWorldPuzzle,
+    eval_puzzle: PushWorldPuzzleAll,
     train_state: TrainState,
     init_hstate: jax.Array,
     num_consecutive_episodes: int = 1,
@@ -176,7 +176,7 @@ def meta_rollout(
     rng: jax.Array,
     env: Environment,
     env_params: EnvParams,
-    eval_puzzle: PushWorldPuzzle,
+    eval_puzzle: PushWorldPuzzleAll,
     train_state: TrainState,
     init_hstate: jax.Array,
     num_consecutive_episodes: int = 1,

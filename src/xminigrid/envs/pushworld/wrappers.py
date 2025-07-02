@@ -9,8 +9,8 @@ from .environment import Environment, EnvParamsT
 from .types import EnvCarryT, IntOrArray, State, TimeStep
 
 
-class Wrapper(Environment[EnvParamsT, EnvCarryT]):
-    def __init__(self, env: Environment[EnvParamsT, EnvCarryT]):
+class Wrapper(Environment[EnvParamsT, TimeStep[EnvCarryT], State[EnvCarryT]]):
+    def __init__(self, env: Environment[EnvParamsT, TimeStep[EnvCarryT], State[EnvCarryT]]):
         self._env = env
 
     # Question: what if wrapper adds new parameters to the dataclass?

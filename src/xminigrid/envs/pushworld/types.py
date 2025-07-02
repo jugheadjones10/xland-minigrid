@@ -61,6 +61,7 @@ class State(Generic[EnvCarryT], struct.PyTreeNode):
 class StateAll(Generic[EnvCarryT], struct.PyTreeNode):
     key: jax.Array
     step_num: jax.Array
+    puzzle: PushWorldPuzzleAll
 
     a: jax.Array
     m1: jax.Array

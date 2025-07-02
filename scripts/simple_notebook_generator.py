@@ -43,6 +43,7 @@ PRESETS = {
     "single": {
         "train_file": "train_single_task_pushworld.py",
         "eval_file": "eval_single_pushworld.py",
+        "nn_file": "nn_pushworld.py",
         "output_name": "pushworld_single_task",
         "title": "Single-task PushWorld Training",
         "train_config": """config = TrainConfig(
@@ -55,6 +56,7 @@ PRESETS = {
     "meta": {
         "train_file": "train_meta_task_pushworld.py",
         "eval_file": "eval_meta_pushworld.py",
+        "nn_file": "nn_pushworld.py",
         "output_name": "pushworld_meta_task",
         "title": "Meta-task PushWorld Training",
         "train_config": """config = TrainConfig(
@@ -72,10 +74,11 @@ PRESETS = {
         "train_file": "train_single_task_pushworld_all.py",
         "utils_file": "utils_pushworld_all.py",
         "eval_file": "eval_single_pushworld.py",
+        "nn_file": "nn_pushworld_all.py",
         "output_name": "pushworld_single_task_all",
         "title": "Single-task PushWorld Training (All Environment)",
         "train_config": """config = TrainConfig(
-    benchmark_id="level0_transformed_base",
+    benchmark_id="level0_transformed_all",
     total_timesteps=1000_000_000,
     num_envs=8192,
     num_steps=100
@@ -86,10 +89,11 @@ PRESETS = {
         "utils_file": "utils_pushworld_all.py",
         # TODO: add eval_meta_pushworld_all.py
         "eval_file": "eval_meta_pushworld.py",
+        "nn_file": "nn_pushworld_all.py",
         "output_name": "pushworld_meta_task_all",
         "title": "Meta-task PushWorld Training (All Environment)",
         "train_config": """config = TrainConfig(
-    benchmark_id="level0_transformed_base",
+    benchmark_id="level0_transformed_all",
     total_timesteps=1000_000_000,
     num_envs=8192,
     num_steps_per_env=500,
@@ -434,14 +438,17 @@ from dataclasses import asdict, dataclass #noqa
 from functools import partial #noqa
 
 import xminigrid.envs.pushworld as pushworld
-from xminigrid.envs.pushworld.benchmarks import Benchmark
+from xminigrid.envs.pushworld.benchmarks import Benchmark, BenchmarkAll
 from xminigrid.envs.pushworld.constants import Tiles, NUM_TILES, SUCCESS_REWARD
 from xminigrid.envs.pushworld.environment import Environment, EnvParams, EnvParamsT
 from xminigrid.envs.pushworld.envs.single_task_pushworld import SingleTaskPushWorldEnvironment, SingleTaskPushWorldEnvParams
 from xminigrid.envs.pushworld.envs.meta_task_pushworld import MetaTaskPushWorldEnvironment
+# Import level 0 "all" environments
+from xminigrid.envs.pushworld.envs.single_task_all_pushworld import SingleTaskPushWorldEnvironmentAll 
+from xminigrid.envs.pushworld.envs.meta_task_all_pushworld import MetaTaskPushWorldEnvironmentAll
 from xminigrid.envs.pushworld.scripts.upload import encode_puzzle
 from xminigrid.envs.pushworld.wrappers import GoalObservationWrapper, GymAutoResetWrapper, Wrapper
-from xminigrid.envs.pushworld.types import State, TimeStep, StepType, EnvCarry, PushWorldPuzzle
+from xminigrid.envs.pushworld.types import State, TimeStep, StepType, EnvCarry, PushWorldPuzzle, PushWorldPuzzleAll
 from xminigrid.envs.pushworld.grid import get_obs_from_puzzle
 from IPython.display import Video, HTML, display""",
         },

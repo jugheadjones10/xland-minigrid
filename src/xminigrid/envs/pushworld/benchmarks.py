@@ -111,6 +111,19 @@ def load_all_benchmark_from_path(path: str) -> BenchmarkAll:
     return benchmark
 
 
+def load_all_benchmark(name: str) -> BenchmarkAll:
+    if name not in NAME2HFFILENAME:
+        raise RuntimeError(f"Unknown benchmark. Registered: {registered_benchmarks()}")
+
+    os.makedirs(DATA_PATH, exist_ok=True)
+
+    path = os.path.join(DATA_PATH, NAME2HFFILENAME[name])
+    if not os.path.exists(path):
+        _download_from_hf(HF_REPO_ID, NAME2HFFILENAME[name])
+
+    return load_all_benchmark_from_path(path)
+
+
 def load_benchmark(name: str) -> Benchmark:
     if name not in NAME2HFFILENAME:
         raise RuntimeError(f"Unknown benchmark. Registered: {registered_benchmarks()}")

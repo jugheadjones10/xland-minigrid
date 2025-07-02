@@ -5,7 +5,7 @@ import jax.numpy as jnp
 from flax import struct
 
 from ..actions_all import check_goal, num_goals_reached, take_action_all
-from ..benchmarks import Benchmark
+from ..benchmarks import BenchmarkAll
 from ..constants import LEVEL0_ALL_SIZE, LEVEL0_NUM_CHANNELS, STEP_REWARD, SUCCESS_REWARD
 from ..environment import Environment, EnvParams
 from ..grid import get_obs_from_puzzle
@@ -24,7 +24,7 @@ from ..types import (
 
 class SingleTaskPushWorldEnvParamsAll(EnvParams):
     puzzle: PushWorldPuzzleAll = struct.field(pytree_node=True, default=None)
-    benchmark: Benchmark = struct.field(pytree_node=True, default=None)
+    benchmark: BenchmarkAll = struct.field(pytree_node=True, default=None)
 
 
 class SingleTaskPushWorldEnvironmentAll(
@@ -81,7 +81,7 @@ class SingleTaskPushWorldEnvironmentAll(
         new_state = new_state.replace(
             step_num=timestep.state.step_num + 1,
         )
-        new_observation = get_obs_from_puzzle_all(params.puzzle, new_state)
+        new_observation = get_obs_from_puzzle_all(new_state.puzzle, new_state)
 
         # Calculate reward based on goal progress
         prev_goals_reached = num_goals_reached(timestep.observation)
@@ -110,6 +110,7 @@ class SingleTaskPushWorldEnvironmentAll(
         state = StateAll(
             key=key,
             step_num=jnp.asarray(0),
+            puzzle=params.puzzle,
             a=params.puzzle.a,
             m1=params.puzzle.m1,
             m2=params.puzzle.m2,
