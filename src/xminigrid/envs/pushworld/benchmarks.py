@@ -1,30 +1,30 @@
 from __future__ import annotations
 
+import abc
 import bz2
 import os
 import pickle
 import urllib.request
-from typing import Literal
+from typing import Generic, Literal
 
 import jax
 import jax.numpy as jnp
 from flax import struct
 from tqdm.auto import tqdm
 
-from .types import PushWorldPuzzle
+from .types import PushWorldPuzzle, PushWorldPuzzleAll, PuzzleT
 
 HF_REPO_ID = os.environ.get("PUSHWORLD_HF_REPO_ID", "feynmaniac/pushworld")
 DATA_PATH = os.environ.get("PUSHWORLD_DATA", os.path.expanduser("~/.pushworld"))
 
 NAME2HFFILENAME = {
+    "level0_transformed_all": "pushworld_level0_transformed_all.pkl",
     "level0_transformed_base": "pushworld_level0_transformed_base.pkl",
     "level0_mini": "pushworld_level0_mini.pkl",
 }
 
 
-# jit compatible sampling and indexing!
-# You can implement your custom curriculums based on this class.
-class Benchmark(struct.PyTreeNode):
+class BenchmarkBase(Generic[PuzzleT], struct.PyTreeNode):
     train_puzzles: jax.Array
     test_puzzles: jax.Array
 
@@ -34,12 +34,29 @@ class Benchmark(struct.PyTreeNode):
     def num_test_puzzles(self) -> int:
         return len(self.test_puzzles)
 
-    def get_test_puzzles(self) -> PushWorldPuzzle:
+    @abc.abstractmethod
+    def get_puzzle(self, puzzle_id: jax.Array, type: Literal["train", "test"] = "train") -> PuzzleT: ...
+
+    def get_test_puzzles(self) -> PuzzleT:
         return jax.vmap(self.get_puzzle, in_axes=(0, None))(jnp.arange(self.num_test_puzzles()), "test")
 
-    def get_train_puzzles(self) -> PushWorldPuzzle:
+    def get_train_puzzles(self) -> PuzzleT:
         return jax.vmap(self.get_puzzle, in_axes=(0, None))(jnp.arange(self.num_train_puzzles()), "train")
 
+    def sample_puzzle(self, key: jax.Array, type: Literal["train", "test"] = "train") -> PuzzleT:
+        key, _key = jax.random.split(key)
+        puzzle_id = jax.lax.cond(
+            type == "train",
+            lambda k: jax.random.randint(k, shape=(), minval=0, maxval=self.num_train_puzzles()),
+            lambda k: jax.random.randint(k, shape=(), minval=0, maxval=self.num_test_puzzles()),
+            _key,
+        )
+        return self.get_puzzle(puzzle_id, type)
+
+
+# jit compatible sampling and indexing!
+# You can implement your custom curriculums based on this class.
+class Benchmark(BenchmarkBase[PushWorldPuzzle]):
     def get_puzzle(self, puzzle_id: jax.Array, type: Literal["train", "test"] = "train") -> PushWorldPuzzle:
         puzzle = jax.lax.cond(
             type == "train",
@@ -55,40 +72,39 @@ class Benchmark(struct.PyTreeNode):
             walls=puzzle[8:],
         )
 
-    def sample_puzzle(self, key: jax.Array, type: Literal["train", "test"] = "train") -> PushWorldPuzzle:
-        # Split the key for random number generation
-        key, _key = jax.random.split(key)
 
-        # Use jax.lax.cond for control flow
-        puzzle_id = jax.lax.cond(
+class BenchmarkAll(BenchmarkBase[PushWorldPuzzleAll]):
+    def get_puzzle(self, puzzle_id: jax.Array, type: Literal["train", "test"] = "train") -> PushWorldPuzzleAll:
+        puzzle = jax.lax.cond(
             type == "train",
-            lambda k: jax.random.randint(k, shape=(), minval=0, maxval=self.num_train_puzzles()),
-            lambda k: jax.random.randint(k, shape=(), minval=0, maxval=self.num_test_puzzles()),
-            _key,
+            lambda: jax.lax.dynamic_index_in_dim(self.train_puzzles, puzzle_id, keepdims=False),
+            lambda: jax.lax.dynamic_index_in_dim(self.test_puzzles, puzzle_id, keepdims=False),
         )
-        return self.get_puzzle(puzzle_id, type)
-
-    # def shuffle(self, key: jax.Array) -> Benchmark:
-    #     idxs = jax.random.permutation(key, jnp.arange(len(self.num_rules)))
-    #     return jtu.tree_map(lambda a: a[idxs], self)
-
-    # def split(self, prop: float) -> tuple[Benchmark, Benchmark]:
-    #     idx = round(len(self.num_rules) * prop)
-    #     bench1 = jtu.tree_map(lambda a: a[:idx], self)
-    #     bench2 = jtu.tree_map(lambda a: a[idx:], self)
-    #     return bench1, bench2
-
-    # def filter_split(self, fn: Callable[[jax.Array, jax.Array], bool]) -> tuple[Benchmark, Benchmark]:
-    #     # fn(single_goal, single_rules) -> bool
-    #     mask = jax.vmap(fn)(self.goals, self.rules)
-    #     bench1 = jtu.tree_map(lambda a: a[mask], self)
-    #     bench2 = jtu.tree_map(lambda a: a[~mask], self)
-    #     return bench1, bench2
+        return PushWorldPuzzleAll(
+            id=puzzle_id,
+            a=puzzle[:6].reshape(-1, 2),
+            m1=puzzle[6:12].reshape(-1, 2),
+            m2=puzzle[12:18].reshape(-1, 2),
+            m3=puzzle[18:24].reshape(-1, 2),
+            m4=puzzle[24:30].reshape(-1, 2),
+            g1=puzzle[30:36].reshape(-1, 2),
+            g2=puzzle[36:42].reshape(-1, 2),
+            w=puzzle[42:].reshape(-1, 2),
+        )
 
 
 def load_benchmark_from_path(path: str) -> Benchmark:
     puzzle_dict = load_bz2_pickle(path)
     benchmark = Benchmark(
+        train_puzzles=puzzle_dict["train"],
+        test_puzzles=puzzle_dict["test"],
+    )
+    return benchmark
+
+
+def load_all_benchmark_from_path(path: str) -> BenchmarkAll:
+    puzzle_dict = load_bz2_pickle(path)
+    benchmark = BenchmarkAll(
         train_puzzles=puzzle_dict["train"],
         test_puzzles=puzzle_dict["test"],
     )

@@ -21,13 +21,13 @@ from flax.jax_utils import replicate, unreplicate
 from flax.training import orbax_utils
 from flax.training.train_state import TrainState
 from nn_pushworld import ActorCriticRNN
-from utils_pushworld import Transition, calculate_gae, ppo_update_networks, rollout
+from utils_pushworld_all import Transition, calculate_gae, ppo_update_networks, rollout
 
 import xminigrid.envs.pushworld as pushworld
 from xminigrid.envs.pushworld.benchmarks import Benchmark
 from xminigrid.envs.pushworld.environment import Environment, EnvParams, EnvParamsT
-from xminigrid.envs.pushworld.envs.single_task_pushworld import SingleTaskPushWorldEnvironment
-from xminigrid.envs.pushworld.wrappers import GoalObservationWrapper, GymAutoResetWrapper
+from xminigrid.envs.pushworld.envs.single_task_all_pushworld import SingleTaskPushWorldEnvironmentAll
+from xminigrid.envs.pushworld.wrappers import GymAutoResetWrapper
 
 # this will be default in new jax versions anyway
 # jax.config.update("jax_threefry_partitionable", True)
@@ -95,10 +95,9 @@ def make_states(config: TrainConfig):
         return config.lr * frac
 
     # setup environment
-    env = SingleTaskPushWorldEnvironment()
+    env = SingleTaskPushWorldEnvironmentAll()
     env_params = env.default_params()
     env = GymAutoResetWrapper(env)
-    env = GoalObservationWrapper(env)
 
     benchmark = pushworld.load_benchmark(config.benchmark_id)
 
@@ -106,9 +105,9 @@ def make_states(config: TrainConfig):
     train_rng, test_rng = jax.random.split(puzzle_rng)
 
     if config.num_train is not None:
-        assert (
-            config.num_train <= benchmark.num_train_puzzles()
-        ), "num_train is larger than num train available in benchmark"
+        assert config.num_train <= benchmark.num_train_puzzles(), (
+            "num_train is larger than num train available in benchmark"
+        )
         perm = jax.random.permutation(train_rng, benchmark.num_train_puzzles())
         idxs = perm[: config.num_train]
         benchmark = benchmark.replace(train_puzzles=benchmark.train_puzzles[idxs])
@@ -116,9 +115,9 @@ def make_states(config: TrainConfig):
         config.num_train = benchmark.num_train_puzzles()
 
     if config.num_test is not None:
-        assert (
-            config.num_test <= benchmark.num_test_puzzles()
-        ), "num_test is larger than num test available in benchmark"
+        assert config.num_test <= benchmark.num_test_puzzles(), (
+            "num_test is larger than num test available in benchmark"
+        )
         perm = jax.random.permutation(test_rng, benchmark.num_test_puzzles())
         idxs = perm[: config.num_test]
         benchmark = benchmark.replace(test_puzzles=benchmark.test_puzzles[idxs])
@@ -153,8 +152,7 @@ def make_states(config: TrainConfig):
     shapes = env.observation_shape(env_params)
 
     init_obs = {
-        "obs_img": jnp.zeros((config.num_envs_per_device, 1, *shapes["img"])),
-        "obs_goal": jnp.zeros((config.num_envs_per_device, 1, shapes["goal"])),
+        "obs": jnp.zeros((config.num_envs_per_device, 1, *shapes)),
         "prev_action": jnp.zeros((config.num_envs_per_device, 1), dtype=jnp.int32),
         "prev_reward": jnp.zeros((config.num_envs_per_device, 1)),
     }
@@ -206,8 +204,7 @@ def make_train(
                     train_state.params,
                     {
                         # [batch_size, seq_len=1, ...]
-                        "obs_img": prev_timestep.observation["img"][:, None],
-                        "obs_goal": prev_timestep.observation["goal"][:, None],
+                        "obs": prev_timestep.observation[:, None],
                         "prev_action": prev_action[:, None],
                         "prev_reward": prev_reward[:, None],
                     },
@@ -225,8 +222,7 @@ def make_train(
                     value=value,
                     reward=timestep.reward,
                     log_prob=log_prob,
-                    obs=prev_timestep.observation["img"],
-                    goal=prev_timestep.observation["goal"],
+                    obs=prev_timestep.observation,
                     prev_action=prev_action,
                     prev_reward=prev_reward,
                 )
@@ -243,8 +239,7 @@ def make_train(
             _, last_val, _ = train_state.apply_fn(
                 train_state.params,
                 {
-                    "obs_img": timestep.observation["img"][:, None],
-                    "obs_goal": timestep.observation["goal"][:, None],
+                    "obs": timestep.observation[:, None],
                     "prev_action": prev_action[:, None],
                     "prev_reward": prev_reward[:, None],
                 },

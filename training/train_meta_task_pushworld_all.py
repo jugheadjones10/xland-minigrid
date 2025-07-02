@@ -19,7 +19,7 @@ from flax.jax_utils import replicate, unreplicate
 from flax.training import orbax_utils
 from flax.training.train_state import TrainState
 from nn_pushworld import ActorCriticRNN
-from utils_pushworld import (
+from utils_pushworld_all import (
     MetaRolloutStats,
     Transition,
     calculate_gae,
@@ -31,7 +31,7 @@ from utils_pushworld import (
 import xminigrid.envs.pushworld as pushworld
 from xminigrid.envs.pushworld.benchmarks import Benchmark
 from xminigrid.envs.pushworld.environment import Environment, EnvParams, EnvParamsT
-from xminigrid.envs.pushworld.envs.meta_task_pushworld import MetaTaskPushWorldEnvironment
+from xminigrid.envs.pushworld.envs.meta_task_all_pushworld import MetaTaskPushWorldEnvironmentAll
 from xminigrid.envs.pushworld.wrappers import GoalObservationWrapper, GymAutoResetWrapper
 
 # this will be default in new jax versions anyway
@@ -110,10 +110,9 @@ def make_states(config: TrainConfig):
     # if "XLand" not in config.env_id:
     #     raise ValueError("Only meta-task environments are supported.")
 
-    env = MetaTaskPushWorldEnvironment()
+    env = MetaTaskPushWorldEnvironmentAll()
     env_params = env.default_params()
     env = GymAutoResetWrapper(env)
-    env = GoalObservationWrapper(env)
 
     # enabling image observations if needed
     # if config.img_obs:
@@ -128,9 +127,9 @@ def make_states(config: TrainConfig):
     train_rng, test_rng = jax.random.split(puzzle_rng)
 
     if config.num_train is not None:
-        assert (
-            config.num_train <= benchmark.num_train_puzzles()
-        ), "num_train is larger than num train available in benchmark"
+        assert config.num_train <= benchmark.num_train_puzzles(), (
+            "num_train is larger than num train available in benchmark"
+        )
         perm = jax.random.permutation(train_rng, benchmark.num_train_puzzles())
         idxs = perm[: config.num_train]
         benchmark = benchmark.replace(train_puzzles=benchmark.train_puzzles[idxs])
@@ -138,9 +137,9 @@ def make_states(config: TrainConfig):
         config.num_train = benchmark.num_train_puzzles()
 
     if config.num_test is not None:
-        assert (
-            config.num_test <= benchmark.num_test_puzzles()
-        ), "num_test is larger than num test available in benchmark"
+        assert config.num_test <= benchmark.num_test_puzzles(), (
+            "num_test is larger than num test available in benchmark"
+        )
         perm = jax.random.permutation(test_rng, benchmark.num_test_puzzles())
         idxs = perm[: config.num_test]
         benchmark = benchmark.replace(test_puzzles=benchmark.test_puzzles[idxs])
@@ -170,8 +169,7 @@ def make_states(config: TrainConfig):
 
     init_obs = {
         # We add single channel dimension to end of obs_img
-        "obs_img": jnp.zeros((config.num_envs_per_device, 1, *shapes["img"])),
-        "obs_goal": jnp.zeros((config.num_envs_per_device, 1, shapes["goal"])),
+        "obs": jnp.zeros((config.num_envs_per_device, 1, *shapes)),
         "prev_action": jnp.zeros((config.num_envs_per_device, 1), dtype=jnp.int32),
         "prev_reward": jnp.zeros((config.num_envs_per_device, 1)),
     }
@@ -231,8 +229,7 @@ def make_train(
                         {
                             # [batch_size, seq_len=1, ...]
                             # We add single channel dimension to end of obs_img
-                            "obs_img": prev_timestep.observation["img"][:, None],
-                            "obs_goal": prev_timestep.observation["goal"][:, None],
+                            "obs": prev_timestep.observation[:, None],
                             "prev_action": prev_action[:, None],
                             "prev_reward": prev_reward[:, None],
                         },
@@ -251,8 +248,7 @@ def make_train(
                         value=value,
                         reward=timestep.reward,
                         log_prob=log_prob,
-                        obs=prev_timestep.observation["img"],
-                        goal=prev_timestep.observation["goal"],
+                        obs=prev_timestep.observation,
                         prev_action=prev_action,
                         prev_reward=prev_reward,
                     )
@@ -270,8 +266,7 @@ def make_train(
                     train_state.params,
                     {
                         # We add single channel dimension to end of obs_img
-                        "obs_img": timestep.observation["img"][:, None],
-                        "obs_goal": timestep.observation["goal"][:, None],
+                        "obs": timestep.observation[:, None],
                         "prev_action": prev_action[:, None],
                         "prev_reward": prev_reward[:, None],
                     },

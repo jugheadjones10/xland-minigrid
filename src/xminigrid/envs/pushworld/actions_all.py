@@ -29,10 +29,7 @@ ID_TO_CHANNEL = {
 def take_action_all(observation: jax.Array, state: StateAll, action: IntOrArray) -> StateAll:
     # observation: one-hot encoding of all the different objects in the grid. Stack of 8 channels.
 
-    # frontier = [AGENT]
-
     displacement = DISPLACEMENTS[action]
-    # return move(observation, state, displacement)
     return move_jax_masked(observation, state, displacement)
 
 
@@ -53,86 +50,6 @@ def masked_displacement(
     return disp, valid
 
 
-def move_jax(observation, state: StateAll, displacement):
-    # stack coords for a, m1–m4
-    coords = jnp.stack([state.a, state.m1, state.m2, state.m3, state.m4], axis=0)  # (N, max_pix, 2)
-    N = coords.shape[0]  # 5 objects
-
-    # frontier: indices 0…4; head/tail pointers
-    frontier = jnp.arange(N)  # we'll only enqueue each idx once
-    pushed = jnp.zeros((N,), bool).at[0].set(True)
-    head, tail = 0, 1
-
-    walls = observation[..., ID_TO_CHANNEL["w"]]
-
-    def cond_fn(carry):
-        head, tail, pushed = carry
-        return head < tail
-
-    def body_fn(carry):
-        head, tail, pushed = carry
-        obj_idx = frontier[head]
-        this_coords = coords[obj_idx]  # (max_pix,2)
-
-        # —— use masked_displacement here ——
-        disp_coords, valid_mask = masked_displacement(this_coords, displacement)
-        #
-        # safe‐index into walls:
-        ys = disp_coords[:, 1]
-        xs = disp_coords[:, 0]
-        safe_ys = jnp.where(valid_mask, ys, 0)
-        safe_xs = jnp.where(valid_mask, xs, 0)
-        raw_vals = walls[safe_ys, safe_xs]  # no OOB now
-        wall_vals = jnp.where(valid_mask, raw_vals, 0)  # ignore sentinels
-        hit_wall = jnp.any(wall_vals == 1)
-
-        # bounds check (only on valid slots) - check both >= 0 and < shape
-        inb = (safe_xs >= 0) & (safe_xs < walls.shape[1]) & (safe_ys >= 0) & (safe_ys < walls.shape[0])
-        safe = jnp.where(valid_mask, inb, True)
-        oob = ~jnp.all(safe)
-
-        blocked = hit_wall | oob
-        # if any blockage, short‐circuit by setting head=tail so loop ends
-        tail = jnp.where(blocked, head, tail)
-
-        # otherwise, find collisions with other objects
-        # compare disp_coords (max_pix,2) vs coords (which becomes (N, max_pix, 2) after transposing)
-        eq = disp_coords[:, None, :] == coords.transpose(1, 0, 2)  # (max_pix, N, 2)
-        coll = jnp.any(eq.all(-1), axis=0)  # (N,)
-        new_hits = coll & (~pushed)
-
-        pushed = pushed | new_hits
-        tail = tail + new_hits.sum()
-        head += 1
-
-        return (head, tail, pushed)
-
-    # head, tail, pushed = lax.while_loop(cond_fn, body_fn, (head, tail, pushed))
-
-    carry = (head, tail, pushed)
-    while cond_fn(carry):
-        carry = body_fn(carry)
-    head, tail, pushed = carry
-
-    # if blocked, return original; else apply the push
-    def do_push(st):
-        # apply_masked_displacement to each object in one shot
-        all_disp, all_valid = jax.vmap(masked_displacement, in_axes=(0, None))(coords, displacement)
-        # all_disp: (N, max_pix,2), all_valid: (N, max_pix)
-        moved = jnp.where(all_valid[:, :, None], all_disp, coords)
-        return st.replace(
-            a=moved[0],
-            m1=moved[1],
-            m2=moved[2],
-            m3=moved[3],
-            m4=moved[4],
-        )
-
-    # we treated blockage by killing the loop early; just check pushed[0] to know if agent moved
-    moved_ok = pushed[0]
-    return lax.cond(moved_ok, do_push, lambda st: st, state)
-
-
 def move_jax_masked(observation, state: StateAll, displacement):
     # stack coords for agent + 4 movable objects
     coords = jnp.stack([state.a, state.m1, state.m2, state.m3, state.m4], axis=0)  # (N=5, max_pix, 2)
@@ -142,7 +59,7 @@ def move_jax_masked(observation, state: StateAll, displacement):
 
     # frontier mask: start with only the agent (idx 0) in the wavefront
     frontier = jnp.array([True] + [False] * (N - 1))
-    # pushed mask: mark agent as already “pushed” so we don’t revisit it
+    # pushed mask: mark agent as already "pushed" so we don't revisit it
     pushed = jnp.zeros((N,), dtype=bool).at[0].set(True)
     # broken flag: set to True if any frontier step hits wall/OOB
     broken = False
@@ -152,7 +69,7 @@ def move_jax_masked(observation, state: StateAll, displacement):
         # keep going while there is at least one index in the frontier
         return frontier.any()
 
-    # compute one‐step displacements + valid‐pixel mask for every object
+    # compute one-step displacements + valid-pixel mask for every object
     all_disp, all_valid = jax.vmap(masked_displacement, in_axes=(0, None))(coords, displacement)
     # all_disp:  (N, max_pix, 2)
     # all_valid: (N, max_pix)
@@ -175,7 +92,7 @@ def move_jax_masked(observation, state: StateAll, displacement):
         # if any frontier object is blocked, kill the wavefront entirely
         blocked_any = jnp.any(blocked & frontier)
 
-        # record that we “broke” if the agent (frontier[0]) hit something
+        # record that we "broke" if the agent (frontier[0]) hit something
         broken = broken | blocked_any
 
         # --- compute collision graph: which objects touch which after move ---
@@ -207,12 +124,12 @@ def move_jax_masked(observation, state: StateAll, displacement):
         new_frontier = neighbors & (~pushed)
         pushed = pushed | new_frontier
 
-        # if we didn’t block this iteration, frontier moves on
+        # if we didn't block this iteration, frontier moves on
         frontier = jnp.where(blocked_any, jnp.zeros_like(frontier), new_frontier)
 
         return frontier, pushed, broken
 
-    # run the masked‐wavefront until no new hits
+    # run the masked-wavefront until no new hits
     final_frontier, final_pushed, final_broken = lax.while_loop(cond_fn, body_fn, (frontier, pushed, broken))
 
     # For debugging:
@@ -221,7 +138,7 @@ def move_jax_masked(observation, state: StateAll, displacement):
     #     carry = body_fn(carry)
     # final_frontier, final_pushed, final_broken = carry
 
-    # agent moved OK only if it was ever “pushed” AND we never “broke”
+    # agent moved OK only if it was ever "pushed" AND we never "broke"
     moved_ok = final_pushed[0] & (~final_broken)
 
     # apply the push to all objects in one shot
@@ -247,3 +164,40 @@ def move_jax_masked(observation, state: StateAll, displacement):
     #     return do_push(state)
     # else:
     #     return state
+
+
+def num_goals_reached(observation: jax.Array) -> jax.Array:
+    """Count how many goals are reached (objects on their respective goals)."""
+    # Define object-goal pairs to check
+    obj_goal_pairs = [("m1", "g1"), ("m2", "g2")]
+
+    goals_count = jnp.array(0)  # Start with JAX array instead of Python int
+    for obj, goal in obj_goal_pairs:
+        obj_channel = observation[..., ID_TO_CHANNEL[obj]]
+        goal_channel = observation[..., ID_TO_CHANNEL[goal]]
+
+        # Check if goal exists (not all zeros) and object matches goal exactly
+        has_goal = jnp.any(goal_channel)
+        on_goal = jnp.array_equal(obj_channel, goal_channel)
+        goals_count += jnp.where(has_goal, on_goal, False)
+
+    return goals_count
+
+
+def count_total_goals(observation: jax.Array) -> jax.Array:
+    """Count how many goals exist in the level."""
+    goal_channels = ["g1", "g2"]
+    total_goals = jnp.array(0)
+    for goal in goal_channels:
+        goal_channel = observation[..., ID_TO_CHANNEL[goal]]
+        has_goal = jnp.any(goal_channel)
+        total_goals += jnp.where(has_goal, 1, 0)
+    return total_goals
+
+
+def check_goal(observation: jax.Array, state: StateAll) -> jax.Array:
+    """Check if all existing goals have been reached."""
+    goals_reached = num_goals_reached(observation)
+    total_goals = count_total_goals(observation)
+    # All goals reached when the number of goals reached equals the total number of existing goals
+    return goals_reached == total_goals

@@ -14,7 +14,7 @@ class SingleTaskPushWorldEnvParams(EnvParams):
     benchmark: Benchmark = struct.field(pytree_node=True, default=None)
 
 
-class SingleTaskPushWorldEnvironment(Environment[SingleTaskPushWorldEnvParams, EnvCarry]):
+class SingleTaskPushWorldEnvironment(Environment[SingleTaskPushWorldEnvParams, TimeStep[EnvCarry], State[EnvCarry]]):
     def default_params(self, **kwargs: Any) -> SingleTaskPushWorldEnvParams:
         params = SingleTaskPushWorldEnvParams()
         params = params.replace(**kwargs)

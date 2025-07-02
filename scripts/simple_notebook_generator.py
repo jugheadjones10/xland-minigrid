@@ -2,13 +2,33 @@
 """
 Simple Notebook Generator
 
-Just specify cells and which files to include. That's it.
+Just specify source files and training config. Examples:
+
+# Single task training:
+python simple_notebook_generator.py \
+    --train_file=train_single_task_pushworld.py \
+    --eval_file=eval_single_pushworld.py \
+    --output_name=single_task
+
+# Meta task training:  
+python simple_notebook_generator.py \
+    --train_file=train_meta_task_pushworld.py \
+    --eval_file=eval_meta_pushworld.py \
+    --output_name=meta_task \
+    --train_config='config = TrainConfig(benchmark_id="level0_transformed_base", total_timesteps=1000_000_000, num_envs=8192, num_steps_per_env=500, num_steps_per_update=500, train_test_same=False, num_train=2000, num_test=200)'
+
+# Using "All" versions:
+python simple_notebook_generator.py \
+    --train_file=train_single_task_pushworld_all.py \
+    --utils_file=utils_pushworld_all.py \
+    --eval_file=eval_single_pushworld.py \
+    --output_name=single_task_all
 """
 
 import re
 from dataclasses import dataclass
-from enum import Enum
 from pathlib import Path
+from typing import Optional
 
 import libcst as cst
 import nbformat as nbf
@@ -18,27 +38,26 @@ TRAINING_DIR = Path(__file__).parent.parent / "training"
 EXPERIMENTS_DIR = Path(__file__).parent.parent / "experiments"
 
 
-class TrainingType(Enum):
-    SINGLE = "single"
-    META = "meta"
-
-
-@dataclass
-class Config:
-    type: TrainingType = TrainingType.SINGLE
-
-    @property
-    def train_file(self) -> str:
-        """Get the appropriate training file based on type."""
-        if self.type == TrainingType.META:
-            return "train_meta_task_pushworld.py"
-        else:
-            return "train_single_task_pushworld.py"
-
-    @property
-    def train_config(self) -> str:
-        if self.type == TrainingType.META:
-            return """config = TrainConfig(
+# Example preset configurations
+PRESETS = {
+    "single": {
+        "train_file": "train_single_task_pushworld.py",
+        "eval_file": "eval_single_pushworld.py",
+        "output_name": "pushworld_single_task",
+        "title": "Single-task PushWorld Training",
+        "train_config": """config = TrainConfig(
+    benchmark_id="level0_transformed_base", 
+    total_timesteps=200_000_000, 
+    num_envs=8192, 
+    num_steps=100
+)""",
+    },
+    "meta": {
+        "train_file": "train_meta_task_pushworld.py",
+        "eval_file": "eval_meta_pushworld.py",
+        "output_name": "pushworld_meta_task",
+        "title": "Meta-task PushWorld Training",
+        "train_config": """config = TrainConfig(
     benchmark_id="level0_transformed_base",
     total_timesteps=1000_000_000,
     num_envs=8192,
@@ -47,14 +66,85 @@ class Config:
     train_test_same=False,
     num_train=2000,
     num_test=200,
-)"""
-        else:
-            return """config = TrainConfig(
+)""",
+    },
+    "single_all": {
+        "train_file": "train_single_task_pushworld_all.py",
+        "utils_file": "utils_pushworld_all.py",
+        "eval_file": "eval_single_pushworld.py",
+        "output_name": "pushworld_single_task_all",
+        "title": "Single-task PushWorld Training (All Environment)",
+        "train_config": """config = TrainConfig(
+    benchmark_id="level0_transformed_base",
+    total_timesteps=1000_000_000,
+    num_envs=8192,
+    num_steps=100
+)""",
+    },
+    "meta_all": {
+        "train_file": "train_meta_task_pushworld_all.py",
+        "utils_file": "utils_pushworld_all.py",
+        # TODO: add eval_meta_pushworld_all.py
+        "eval_file": "eval_meta_pushworld.py",
+        "output_name": "pushworld_meta_task_all",
+        "title": "Meta-task PushWorld Training (All Environment)",
+        "train_config": """config = TrainConfig(
+    benchmark_id="level0_transformed_base",
+    total_timesteps=1000_000_000,
+    num_envs=8192,
+    num_steps_per_env=500,
+    num_steps_per_update=500,
+    train_test_same=False,
+    num_train=2000,
+    num_test=200,
+)""",
+    },
+}
+
+
+@dataclass
+class Config:
+    # Preset configuration (if specified, overrides individual settings)
+    preset: Optional[str] = None
+
+    # Core source files
+    nn_file: str = "nn_pushworld.py"
+    utils_file: str = "utils_pushworld.py"
+    train_file: str = "train_single_task_pushworld.py"
+    eval_utils_file: str = "eval_utils.py"
+    eval_file: str = "eval_single_pushworld.py"
+
+    # Training configuration code (as string)
+    train_config: str = """config = TrainConfig(
     benchmark_id="level0_transformed_base", 
     total_timesteps=200_000_000, 
     num_envs=8192, 
     num_steps=100
 )"""
+
+    # Output filename (without extension)
+    output_name: str = "pushworld_training"
+
+    # Optional title for the notebook
+    title: Optional[str] = None
+
+    def __post_init__(self):
+        """Apply preset configuration if specified."""
+        if self.preset and self.preset in PRESETS:
+            preset_config = PRESETS[self.preset]
+            for key, value in preset_config.items():
+                if not hasattr(self, key) or getattr(self, key) == getattr(Config(), key, None):
+                    # Only override if using default value
+                    setattr(self, key, value)
+
+    @property
+    def notebook_title(self) -> str:
+        """Get the title for the notebook."""
+        if self.title:
+            return self.title
+        # Generate title from train_file
+        name_part = self.train_file.replace("train_", "").replace(".py", "").replace("_", " ").title()
+        return f"{name_part} Training"
 
 
 # Preprocessing functions
@@ -303,7 +393,7 @@ def generate_pushworld_notebook(source_dir, output_dir, config: Config):
     cells = [
         {
             "type": "markdown",
-            "content": f"# {config.type.value.capitalize()}-task PushWorld \n\nCombined training code from multiple source files.",
+            "content": f"# {config.notebook_title}",
         },
         {
             "type": "code",
@@ -356,9 +446,9 @@ from xminigrid.envs.pushworld.grid import get_obs_from_puzzle
 from IPython.display import Video, HTML, display""",
         },
         {"type": "markdown", "content": "## Networks"},
-        {"type": "code", "files": ["nn_pushworld.py"], "processors": ["remove_imports"]},
+        {"type": "code", "files": [config.nn_file], "processors": ["remove_imports"]},
         {"type": "markdown", "content": "## Utils"},
-        {"type": "code", "files": ["utils_pushworld.py"], "processors": ["remove_imports"]},
+        {"type": "code", "files": [config.utils_file], "processors": ["remove_imports"]},
         {"type": "markdown", "content": "## Training"},
         {
             "type": "code",
@@ -368,10 +458,10 @@ from IPython.display import Video, HTML, display""",
         {"type": "markdown", "content": "## Processing"},
         {"type": "code", "files": [config.train_file], "processors": ["extract_processing_function"]},
         {"type": "markdown", "content": "## Evaluation"},
-        {"type": "code", "files": ["eval_utils.py"], "processors": ["remove_imports"]},
+        {"type": "code", "files": [config.eval_utils_file], "processors": ["remove_imports"]},
         {
             "type": "code",
-            "files": ["eval_single_pushworld.py" if config.type == TrainingType.SINGLE else "eval_meta_pushworld.py"],
+            "files": [config.eval_file],
             "processors": ["remove_imports"],
         },
         {"type": "markdown", "content": "## Run Training"},
@@ -382,7 +472,7 @@ from IPython.display import Video, HTML, display""",
         {"type": "code", "files": [config.train_file], "processors": ["extract_init_code"]},
     ]
 
-    return generate_notebook(cells, source_dir, output_dir / f"pushworld_{config.type.value}_base.ipynb")
+    return generate_notebook(cells, source_dir, output_dir / f"{config.output_name}_base.ipynb")
 
 
 @pyrallis.wrap()

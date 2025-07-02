@@ -13,7 +13,19 @@ from .benchmarks import Benchmark
 from .constants import LEVEL0_SIZE, NUM_ACTIONS, STEP_REWARD, SUCCESS_REWARD
 from .grid import get_obs_from_puzzle
 from .rgb_render import rgb_render
-from .types import EnvCarry, EnvCarryT, IntOrArray, PushWorldPuzzle, State, StepType, TimeStep
+from .types import (
+    EnvCarry,
+    EnvCarryT,
+    IntOrArray,
+    PushWorldPuzzle,
+    State,
+    StateAll,
+    StateT,
+    StepType,
+    TimeStep,
+    TimeStepAll,
+    TimeStepT,
+)
 
 
 class EnvParams(struct.PyTreeNode):
@@ -29,7 +41,7 @@ class EnvParams(struct.PyTreeNode):
 EnvParamsT = TypeVar("EnvParamsT", bound="EnvParams")
 
 
-class Environment(abc.ABC, Generic[EnvParamsT, EnvCarryT]):
+class Environment(abc.ABC, Generic[EnvParamsT, TimeStepT, StateT]):
     @abc.abstractmethod
     def default_params(self, **kwargs: Any) -> EnvParamsT: ...
 
@@ -44,18 +56,18 @@ class Environment(abc.ABC, Generic[EnvParamsT, EnvCarryT]):
     # For single task, we want to sample a new puzzle on episode reset.
     # For meta task, we want to use the same puzzle across episode resets.
     @abc.abstractmethod
-    def reset(self, params: EnvParamsT, key: jax.Array) -> TimeStep[EnvCarryT]: ...
+    def reset(self, params: EnvParamsT, key: jax.Array) -> TimeStepT: ...
 
     @abc.abstractmethod
-    def _generate_problem(self, params: EnvParamsT, key: jax.Array) -> State[EnvCarryT]: ...
+    def _generate_problem(self, params: EnvParamsT, key: jax.Array) -> StateT: ...
 
     # Eval reset logic can be different from normal reset, because we might want to pass in the full suite of all test
     # puzzles on every eval.
     @abc.abstractmethod
-    def eval_reset(self, params: EnvParamsT, key: jax.Array) -> TimeStep[EnvCarryT]: ...
+    def eval_reset(self, params: EnvParamsT, key: jax.Array) -> TimeStepT: ...
 
     # Why timestep + state at once, and not like in Jumanji? To be able to do autoresets in gym and envpools styles
-    def step(self, params: EnvParamsT, timestep: TimeStep[EnvCarryT], action: IntOrArray) -> TimeStep[EnvCarryT]:
+    def step(self, params: EnvParamsT, timestep: TimeStepT, action: IntOrArray) -> TimeStepT:
         new_grid, changed_position, goal_reached = take_action(
             timestep.state.puzzle, timestep.state.agent_pos, timestep.state.goal_pos, action
         )
@@ -77,7 +89,7 @@ class Environment(abc.ABC, Generic[EnvParamsT, EnvCarryT]):
         step_type = jax.lax.select(terminated | truncated, StepType.LAST, StepType.MID)
         discount = jax.lax.select(terminated, jnp.asarray(0.0), jnp.asarray(1.0))
 
-        timestep = TimeStep(
+        timestep = timestep.replace(
             state=new_state,
             step_type=step_type,
             reward=reward,
@@ -86,7 +98,7 @@ class Environment(abc.ABC, Generic[EnvParamsT, EnvCarryT]):
         )
         return timestep
 
-    def render(self, params: EnvParamsT, timestep: TimeStep[EnvCarryT]) -> np.ndarray | str:
+    def render(self, params: EnvParamsT, timestep: TimeStepT) -> np.ndarray | str:
         if params.render_mode == "rgb_array":
             return rgb_render(np.asarray(timestep.state.puzzle))
         # elif params.render_mode == "rich_text":

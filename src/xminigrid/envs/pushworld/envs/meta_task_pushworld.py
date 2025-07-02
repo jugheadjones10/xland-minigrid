@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Optional
 
 import jax
 import jax.numpy as jnp
@@ -6,10 +6,10 @@ from flax import struct
 
 from ..environment import Environment, EnvParams
 from ..grid import get_obs_from_puzzle
-from ..types import EnvCarry, State, StepType, TimeStep
+from ..types import EnvCarry, PushWorldPuzzleAll, State, StateAll, StepType, TimeStep, TimeStepAll
 
 
-class MetaTaskPushWorldEnvironment(Environment[EnvParams, EnvCarry]):
+class MetaTaskPushWorldEnvironment(Environment[EnvParams, TimeStep[EnvCarry], State[EnvCarry]]):
     def default_params(self, **kwargs: Any) -> EnvParams:
         params = EnvParams()
         params = params.replace(**kwargs)
