@@ -92,6 +92,7 @@ class MetaTaskPushWorldEnvironmentAll(Environment[EnvParamsAll, TimeStepAll[EnvC
         state = StateAll(
             key=key,
             step_num=jnp.asarray(0),
+            puzzle=params.puzzle,
             a=params.puzzle.a,
             m1=params.puzzle.m1,
             m2=params.puzzle.m2,
