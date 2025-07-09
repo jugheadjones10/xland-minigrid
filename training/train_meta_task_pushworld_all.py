@@ -121,7 +121,7 @@ def make_states(config: TrainConfig):
     #   env = RGBImgObservationWrapper(env)
 
     # loading benchmark
-    benchmark = pushworld.load_benchmark(config.benchmark_id)
+    benchmark = pushworld.load_all_benchmark(config.benchmark_id)
 
     puzzle_rng = jax.random.key(config.puzzle_seed)
     train_rng, test_rng = jax.random.split(puzzle_rng)
