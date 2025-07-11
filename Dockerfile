@@ -11,6 +11,10 @@ RUN apt-get update && \
 # Make "python" reference python3
 RUN ln -s /usr/bin/python3 /usr/bin/python
 
+# Copy only the files needed to install dependencies
+COPY pyproject.toml pyproject.toml
+COPY poetry.lock poetry.lock
+
 # Install Poetry
 RUN pip install --upgrade pip && \
     curl -sSL https://install.python-poetry.org | python3 - && \
@@ -23,9 +27,6 @@ RUN poetry install --extras baselines
 COPY ./src /src
 RUN mkdir training && touch training/__init__.py
 
-# Copy only the files needed to install dependencies
-COPY pyproject.toml pyproject.toml
-COPY poetry.lock poetry.lock
 
 # I want to eventually install the current project as well, which requires the README.md
 COPY LICENSE LICENSE
