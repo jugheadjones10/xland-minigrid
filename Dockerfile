@@ -5,7 +5,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Install system dependencies
 RUN apt-get update && \
-    apt-get -y install python3-pip xvfb ffmpeg git build-essential && \
+    apt-get -y install python3-pip xvfb ffmpeg git build-essential curl && \
     rm -rf /var/lib/apt/lists/*
 
 # Make "python" reference python3
