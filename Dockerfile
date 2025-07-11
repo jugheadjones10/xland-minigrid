@@ -12,7 +12,13 @@ RUN apt-get update && \
 RUN ln -s /usr/bin/python3 /usr/bin/python
 
 # Install Poetry
-RUN pip install --upgrade pip && pip install poetry
+RUN pip install --upgrade pip && \
+    curl -sSL https://install.python-poetry.org | python3 - && \
+    ln -s /root/.local/bin/poetry /usr/local/bin/poetry
+
+# Install dependencies
+RUN poetry install --extras baselines
+
 
 COPY ./src /src
 RUN mkdir training && touch training/__init__.py
