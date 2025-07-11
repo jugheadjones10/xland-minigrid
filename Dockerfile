@@ -14,6 +14,8 @@ RUN ln -s /usr/bin/python3 /usr/bin/python
 # Copy only the files needed to install dependencies
 COPY pyproject.toml pyproject.toml
 COPY poetry.lock poetry.lock
+COPY LICENSE LICENSE
+COPY README.md README.md
 
 # Install Poetry
 RUN pip install --upgrade pip && \
@@ -29,8 +31,6 @@ RUN mkdir training && touch training/__init__.py
 
 
 # I want to eventually install the current project as well, which requires the README.md
-COPY LICENSE LICENSE
-COPY README.md README.md
 RUN poetry install --extras baselines
 
 COPY ./training /training
