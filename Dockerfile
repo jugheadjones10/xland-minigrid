@@ -16,6 +16,7 @@ COPY pyproject.toml pyproject.toml
 COPY poetry.lock poetry.lock
 COPY LICENSE LICENSE
 COPY README.md README.md
+COPY ./src /src
 
 # Install Poetry
 RUN pip install --upgrade pip && \
@@ -26,7 +27,6 @@ RUN pip install --upgrade pip && \
 RUN poetry install --extras baselines
 
 
-COPY ./src /src
 RUN mkdir training && touch training/__init__.py
 
 
