@@ -2,7 +2,7 @@ version: "3"
 tasks:
   build-docker-amd:
     cmds:
-      - docker buildx build --output=type=registry -t juggy69/pushworld:amd --platform linux/amd64 .
+      - docker build -t juggy69/pushworld:amd --platform linux/amd64 .
 
   build-docker-arm:
     cmds:
