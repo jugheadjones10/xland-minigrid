@@ -1,0 +1,67 @@
+version: "3"
+tasks:
+  build-docker-amd:
+    cmds:
+      - docker buildx build --output=type=registry -t juggy69/pushworld:amd --platform linux/amd64 .
+
+  build-docker-arm:
+    cmds:
+      - docker build -t juggy69/pushworld:arm --platform linux/arm64 .
+
+  push-docker-arm:
+    cmds:
+      - docker push juggy69/pushworld:arm
+
+  run-docker:
+    cmds:
+      - docker run -it pushworld:arm
+
+  test-local-run:
+    vars:
+      COMMAND: >-
+        poetry run python training/train_meta_task_pushworld.py
+        --benchmark_id level0_transformed_base
+        --total_timesteps 1000_000_000
+        --num_envs 8192
+        --num_steps_per_env 500
+        --num_steps_per_update 500
+        --train_test_same False
+        --num_train 2000
+        --num_test 200
+        --track True
+        --upload_model True
+    cmds:
+      - |
+        python -m scripts.submit_exp \
+        --docker-tag juggy69/pushworld:arm \
+        --archs "linux/arm64" \
+        --exp-script "pushworld" \
+        --num-seed 1 \
+        --command "{{.COMMAND}}"
+
+  meta-task-base:
+    vars:
+      COMMAND: >-
+        poetry run python training/train_meta_task_pushworld.py
+        --benchmark_id level0_transformed_base
+        --total_timesteps 1000_000_000
+        --num_envs 8192
+        --num_steps_per_env 500
+        --num_steps_per_update 500
+        --train_test_same False
+        --num_train 2000
+        --num_test 200
+        --track True
+        --upload_model True
+    cmds:
+      - |
+        python -m scripts.submit_exp \
+        --docker-tag juggy69/pushworld:arm \
+        --archs "linux/arm64" \
+        --exp-script "pushworld" \
+        --num-seed 1 \
+        --command "{{.COMMAND}}" \
+        --job-queue "g5g-2xlarge" \
+        --num-vcpu 8 \
+        --num-memory 8000 \
+        --provider aws

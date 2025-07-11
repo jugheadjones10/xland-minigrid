@@ -7,22 +7,32 @@ from nn_pushworld import ActorCriticRNN
 
 from xminigrid.envs.pushworld.benchmarks import BenchmarkAll
 from xminigrid.envs.pushworld.constants import Tiles
-from xminigrid.envs.pushworld.envs.single_task_all_pushworld import SingleTaskPushWorldEnvironmentAll
-from xminigrid.envs.pushworld.wrappers import GoalObservationWrapper
+from xminigrid.envs.pushworld.envs.meta_task_pushworld_all import MetaTaskPushWorldEnvironmentAll
+from xminigrid.envs.pushworld.wrappers import GymAutoResetWrapper
 
 
-def evaluate_single(train_info, config, puzzles, video_name, eval_seed):
+def evaluate_meta(train_info, config, puzzles, video_name, eval_seed):
+    META_EPISODES = 10
     # We're only going to sample from test anyway
     benchmark = BenchmarkAll(
         train_puzzles=puzzles,
         test_puzzles=puzzles,
     )
 
-    env = SingleTaskPushWorldEnvironmentAll()
+    # setup environment
+    env = MetaTaskPushWorldEnvironmentAll()
+    env = GymAutoResetWrapper(env)
     env_params = env.default_params()
-    env_params = env_params.replace(benchmark=benchmark)
 
-    params = train_info["runner_state"].params
+    rng = jax.random.key(eval_seed)
+    rng, _rng = jax.random.split(rng)
+
+    puzzle = benchmark.sample_puzzle(_rng, "test")
+    env_params = env_params.replace(puzzle=puzzle)
+
+    # you can use train_state from the final state also
+    # we just demo here how to do it if you loaded params from the checkpoint
+    params = train_info["state"].params
     model = ActorCriticRNN(
         num_actions=env.num_actions(env_params),
         action_emb_dim=config.action_emb_dim,
@@ -36,10 +46,9 @@ def evaluate_single(train_info, config, puzzles, video_name, eval_seed):
     apply_fn, reset_fn, step_fn = jax.jit(model.apply), jax.jit(env.reset), jax.jit(env.step)
 
     # for logging
-    total_reward = 0
+    total_reward, num_episodes = 0, 0
     rendered_imgs = []
 
-    rng = jax.random.key(eval_seed)
     rng, _rng = jax.random.split(rng)
 
     # initial inputs
@@ -50,7 +59,7 @@ def evaluate_single(train_info, config, puzzles, video_name, eval_seed):
     timestep = reset_fn(env_params, _rng)
     rendered_imgs.append(text_to_rgb_all(timestep.observation))
 
-    while not timestep.last():
+    while num_episodes < META_EPISODES:
         rng, _rng = jax.random.split(rng)
         dist, _, hidden = apply_fn(
             params,
@@ -68,6 +77,7 @@ def evaluate_single(train_info, config, puzzles, video_name, eval_seed):
         prev_reward = timestep.reward
 
         total_reward += timestep.reward.item()
+        num_episodes += int(timestep.last().item())
         rendered_imgs.append(text_to_rgb_all(timestep.observation))
 
     imageio.mimsave(f"{video_name}.mp4", rendered_imgs, fps=16, format="mp4")

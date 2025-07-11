@@ -73,7 +73,7 @@ PRESETS = {
     "single_all": {
         "train_file": "train_single_task_pushworld_all.py",
         "utils_file": "utils_pushworld_all.py",
-        "eval_file": "eval_single_pushworld.py",
+        "eval_file": "eval_single_pushworld_all.py",
         "nn_file": "nn_pushworld_all.py",
         "output_name": "pushworld_single_task_all",
         "title": "Single-task PushWorld Training (All Environment)",
@@ -87,8 +87,7 @@ PRESETS = {
     "meta_all": {
         "train_file": "train_meta_task_pushworld_all.py",
         "utils_file": "utils_pushworld_all.py",
-        # TODO: add eval_meta_pushworld_all.py
-        "eval_file": "eval_meta_pushworld.py",
+        "eval_file": "eval_meta_pushworld_all.py",
         "nn_file": "nn_pushworld_all.py",
         "output_name": "pushworld_meta_task_all",
         "title": "Meta-task PushWorld Training (All Environment)",
@@ -472,6 +471,12 @@ from IPython.display import Video, HTML, display""",
             "processors": ["remove_imports"],
         },
         {"type": "markdown", "content": "## Run Training"},
+        {
+            "type": "code",
+            "content": """import os, wandb
+os.environ["WANDB_API_KEY"] = "" # fill in
+wandb.login(key=os.environ["WANDB_API_KEY"], relogin=True)""",
+        },
         {
             "type": "code",
             "content": config.train_config,
