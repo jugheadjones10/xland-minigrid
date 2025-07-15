@@ -18,7 +18,7 @@ import wandb
 from flax.jax_utils import replicate, unreplicate
 from flax.training import orbax_utils
 from flax.training.train_state import TrainState
-from nn_pushworld import ActorCriticRNN
+from nn_pushworld_all import ActorCriticRNN
 from utils_pushworld_all import (
     MetaRolloutStats,
     Transition,
@@ -29,10 +29,10 @@ from utils_pushworld_all import (
 )
 
 import xminigrid.envs.pushworld as pushworld
-from xminigrid.envs.pushworld.benchmarks import Benchmark
+from xminigrid.envs.pushworld.benchmarks import BenchmarkAll
 from xminigrid.envs.pushworld.environment import Environment, EnvParams, EnvParamsT
 from xminigrid.envs.pushworld.envs.meta_task_all_pushworld import MetaTaskPushWorldEnvironmentAll
-from xminigrid.envs.pushworld.wrappers import GoalObservationWrapper, GymAutoResetWrapper
+from xminigrid.envs.pushworld.wrappers import GymAutoResetWrapper
 
 # this will be default in new jax versions anyway
 jax.config.update("jax_threefry_partitionable", True)
@@ -127,9 +127,9 @@ def make_states(config: TrainConfig):
     train_rng, test_rng = jax.random.split(puzzle_rng)
 
     if config.num_train is not None:
-        assert config.num_train <= benchmark.num_train_puzzles(), (
-            "num_train is larger than num train available in benchmark"
-        )
+        assert (
+            config.num_train <= benchmark.num_train_puzzles()
+        ), "num_train is larger than num train available in benchmark"
         perm = jax.random.permutation(train_rng, benchmark.num_train_puzzles())
         idxs = perm[: config.num_train]
         benchmark = benchmark.replace(train_puzzles=benchmark.train_puzzles[idxs])
@@ -137,9 +137,9 @@ def make_states(config: TrainConfig):
         config.num_train = benchmark.num_train_puzzles()
 
     if config.num_test is not None:
-        assert config.num_test <= benchmark.num_test_puzzles(), (
-            "num_test is larger than num test available in benchmark"
-        )
+        assert (
+            config.num_test <= benchmark.num_test_puzzles()
+        ), "num_test is larger than num test available in benchmark"
         perm = jax.random.permutation(test_rng, benchmark.num_test_puzzles())
         idxs = perm[: config.num_test]
         benchmark = benchmark.replace(test_puzzles=benchmark.test_puzzles[idxs])
@@ -188,7 +188,7 @@ def make_states(config: TrainConfig):
 def make_train(
     env: Environment,
     env_params: EnvParams,
-    benchmark: Benchmark,
+    benchmark: BenchmarkAll,
     config: TrainConfig,
 ):
     @partial(jax.pmap, axis_name="devices")
