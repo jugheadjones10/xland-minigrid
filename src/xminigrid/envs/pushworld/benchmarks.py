@@ -147,7 +147,7 @@ def _download_from_hf(repo_id: str, filename: str) -> None:
     save_path = os.path.join(DATA_PATH, filename)
     print(f"Downloading benchmark data: {dataset_url} to {DATA_PATH}")
 
-    with tqdm(unit="B", unit_scale=True, miniters=1, desc="Progress") as t:
+    with tqdm(unit="B", unit_scale=True, miniters=1, desc="Progress", disable=True) as t:
 
         def progress_hook(block_num=1, block_size=1, total_size=None):
             if total_size is not None:
