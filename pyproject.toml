@@ -34,7 +34,8 @@ classifiers = [
 ]
 
 dependencies = [
-    "jax[cuda12]>=0.4.27",
+    # "jax[cuda12]>=0.4.27",
+    "jax>=0.4.27",
     "flax>=0.8.0",
     "rich>=13.4.2",
     "chex>=0.1.85",
@@ -48,16 +49,16 @@ dependencies = [
 # [tool.poetry.dependencies]
 # jax = {version = "^0.4.27", extras = ["cuda12"]}
 
-# [[tool.poetry.source]]
-# name = "jax"
-# url = "https://storage.googleapis.com/jax-releases/jax_releases.html"
-# priority = "explicit"
+[[tool.poetry.source]]
+name = "jax"
+url = "https://storage.googleapis.com/jax-releases/jax_releases.html"
+priority = "explicit"
 
 
-# [[tool.poetry.source]]
-# name = "jaxlib"
-# url = "https://storage.googleapis.com/jax-releases/jax_cuda_releases.html"
-# priority = "explicit"
+[[tool.poetry.source]]
+name = "jaxlib"
+url = "https://storage.googleapis.com/jax-releases/jax_cuda_releases.html"
+priority = "explicit"
 
 
 [project.optional-dependencies]
