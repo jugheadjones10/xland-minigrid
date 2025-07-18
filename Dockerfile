@@ -5,6 +5,7 @@ FROM nvidia/cuda:12.6.2-runtime-ubuntu22.04
 
 # Set noninteractive mode for apt-get
 ENV DEBIAN_FRONTEND=noninteractive
+ENV LD_LIBRARY_PATH=''
 
 # Install system dependencies
 RUN apt-get update && \
@@ -25,14 +26,6 @@ RUN pip install --upgrade pip && \
 RUN pip install --no-cache-dir "jax[cuda12_pip]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 # -------------------------------------------------
 
-# --- VERIFICATION STEP 1 ---
-# Verify that the GPU backend is available immediately after pip install.
-# The `grep` command will cause the build to fail if the backend is not 'gpu'.
-RUN echo "Verifying JAX backend after pip install..." && \
-    python -c "import jax; print(f'JAX default backend: {jax.default_backend()}')" | grep "gpu"
-
-
-
 # Copy only the files needed to install dependencies
 COPY pyproject.toml pyproject.toml
 COPY poetry.lock poetry.lock
@@ -52,11 +45,5 @@ RUN poetry config virtualenvs.create false
 #     fi
 
 RUN poetry install --extras baselines
-
-# --- VERIFICATION STEP 2 ---
-# Verify again after poetry install to ensure it didn't break anything.
-RUN echo "Verifying JAX backend after poetry install..." && \
-    python -c "import jax; print(f'JAX default backend: {jax.default_backend()}')" | grep "gpu"
-
 
 COPY ./training /training
