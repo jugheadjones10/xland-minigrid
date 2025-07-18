@@ -26,6 +26,6 @@ COPY README.md README.md
 COPY ./src /src
 
 # Install dependencies
-RUN poetry install --extras baselines
+RUN poetry install --extras "baselines ci"
 
 COPY ./training /training
