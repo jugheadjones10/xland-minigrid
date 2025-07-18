@@ -52,13 +52,13 @@ dependencies = [
 [[tool.poetry.source]]
 name = "jax"
 url = "https://storage.googleapis.com/jax-releases/jax_releases.html"
-priority = "explicit"
+priority = "supplemental"
 
 
 [[tool.poetry.source]]
 name = "jaxlib"
 url = "https://storage.googleapis.com/jax-releases/jax_cuda_releases.html"
-priority = "explicit"
+priority = "supplemental"
 
 
 [project.optional-dependencies]
