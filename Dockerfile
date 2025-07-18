@@ -1,5 +1,8 @@
 FROM nvidia/cuda:12.6.2-runtime-ubuntu22.04
 
+# Build argument for installing CI dependencies
+# ARG INSTALL_CI=false
+
 # Set noninteractive mode for apt-get
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -26,6 +29,12 @@ COPY README.md README.md
 COPY ./src /src
 
 # Install dependencies
-RUN poetry install --extras "baselines ci"
+# RUN if [ "$INSTALL_CI" = "true" ]; then \
+#         poetry install --extras "baselines ci"; \
+#     else \
+#         poetry install --extras "baselines"; \
+#     fi
+
+RUN poetry install --extras baselines
 
 COPY ./training /training
