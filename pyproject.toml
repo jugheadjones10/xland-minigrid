@@ -35,7 +35,7 @@ classifiers = [
 
 dependencies = [
     # "jax[cuda12]>=0.4.27",
-    "jax>=0.4.27",
+    # "jax>=0.4.27",
     "flax>=0.8.0",
     "rich>=13.4.2",
     "chex>=0.1.85",
