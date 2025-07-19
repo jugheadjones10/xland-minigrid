@@ -20,11 +20,6 @@ RUN pip install --upgrade pip && \
     curl -sSL https://install.python-poetry.org | python3 - && \
     ln -s /root/.local/bin/poetry /usr/local/bin/poetry
 
-# ----------------- ADD THIS STEP -----------------
-# Explicitly install CUDA-enabled JAX using pip. This is the most reliable method.
-# It uses the special "cuda12_pip" extra and finds the correct wheel from Google's repo.
-RUN pip install --no-cache-dir "jax[cuda12_pip]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
-# -------------------------------------------------
 
 # Copy only the files needed to install dependencies
 COPY pyproject.toml pyproject.toml
@@ -45,5 +40,11 @@ RUN poetry config virtualenvs.create false
 #     fi
 
 RUN poetry install --extras baselines
+
+# ----------------- ADD THIS STEP -----------------
+# Explicitly install CUDA-enabled JAX using pip. This is the most reliable method.
+# It uses the special "cuda12_pip" extra and finds the correct wheel from Google's repo.
+RUN pip install --no-cache-dir "jax[cuda12]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+# -------------------------------------------------
 
 COPY ./training /training
