@@ -7,7 +7,6 @@ license = {file = "LICENSE"}
 authors = [
   {name = "Alexander Nikulin", email = "a.p.nikulin@tinkoff.ai"},
 ]
-# dynamic = ["version"]
 version = "0.1.0"
 
 keywords = [
@@ -94,10 +93,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
-
-# [tool.setuptools.dynamic]
-# version = {attr = "xminigrid.__version__"}
 
 [tool.ruff]
 line-length = 120
