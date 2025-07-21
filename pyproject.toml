@@ -95,13 +95,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["src"]
 
-[tool.poetry]
-packages = [
-    {include = "xminigrid", from = "src"},
-]
 
-[tool.setuptools.dynamic]
-version = {attr = "xminigrid.__version__"}
+# [tool.setuptools.dynamic]
+# version = {attr = "xminigrid.__version__"}
 
 [tool.ruff]
 line-length = 120
