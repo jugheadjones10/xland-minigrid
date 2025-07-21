@@ -7,7 +7,7 @@ license = {file = "LICENSE"}
 authors = [
   {name = "Alexander Nikulin", email = "a.p.nikulin@tinkoff.ai"},
 ]
-version = "0.1.0"
+version = "0.0.1"
 
 keywords = [
     "jax",
