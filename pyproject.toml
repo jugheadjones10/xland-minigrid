@@ -7,8 +7,8 @@ license = {file = "LICENSE"}
 authors = [
   {name = "Alexander Nikulin", email = "a.p.nikulin@tinkoff.ai"},
 ]
-# dynamic = ["version"]
-version = "0.1.0"
+dynamic = ["version"]
+# version = "0.1.0"
 
 keywords = [
     "jax",
@@ -87,12 +87,13 @@ cloud = [
 #     "jax[cuda12]>=0.4.27",
 # ]
 
-[tool.setuptools.packages.find]
-where = ["src"]
 
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.poetry]
 packages = [
