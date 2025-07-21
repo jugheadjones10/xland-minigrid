@@ -7,8 +7,8 @@ license = {file = "LICENSE"}
 authors = [
   {name = "Alexander Nikulin", email = "a.p.nikulin@tinkoff.ai"},
 ]
-dynamic = ["version"]
-# version = "0.1.0"
+# dynamic = ["version"]
+version = "0.1.0"
 
 keywords = [
     "jax",
