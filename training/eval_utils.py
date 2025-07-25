@@ -129,58 +129,20 @@ def text_to_rgb_all(observation: jax.Array):
     return upscaled_img
 
 
-def fetch_model_from_wandb(
-    project: str,
-    run_id: str,
-    artifact_name: Optional[str] = None,
-    download_path: str = "./downloaded_checkpoints",
-    entity: Optional[str] = None,
-):
-    """
-    Fetch model parameters from a WandB artifact.
+def load_checkpoint_params(run_id):
+    api = wandb.Api()
 
-    Args:
-        project: WandB project name
-        run_id: WandB run ID
-        artifact_name: Specific artifact name (if None, uses f"model-checkpoint-{run_id}")
-        download_path: Local path to download the artifact
-        entity: WandB entity/username (if None, uses default)
+    # Construct the full artifact path
+    artifact_path = f"kimyoungjin-nus/PushWorld/model-checkpoint-{run_id}:latest"
 
-    Returns:
-        Model parameters from the checkpoint
-    """
+    # Fetch the artifact object directly
+    artifact = api.artifact(artifact_path)
 
-    # Initialize wandb in offline mode to avoid creating a new run
-    if entity:
-        wandb.init(project=project, entity=entity, mode="offline")
-    else:
-        wandb.init(project=project, mode="offline")
+    # Download its contents
+    artifact_dir = artifact.download()
 
-    try:
-        # Construct artifact name if not provided
-        if artifact_name is None:
-            artifact_name = f"model-checkpoint-{run_id}:latest"
-        elif ":latest" not in artifact_name and ":v" not in artifact_name:
-            artifact_name = f"{artifact_name}:latest"
+    orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
+    checkpoint = orbax_checkpointer.restore(artifact_dir)
 
-        print(f"Fetching artifact: {artifact_name}")
-
-        # Download the artifact
-        artifact = wandb.use_artifact(artifact_name)
-        artifact_dir = artifact.download(root=download_path)
-
-        print(f"Downloaded to: {artifact_dir}")
-
-        # Load the checkpoint using orbax
-        orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
-        checkpoint = orbax_checkpointer.restore(artifact_dir)
-
-        print("Successfully loaded checkpoint")
-
-        return checkpoint["params"]
-
-    except Exception as e:
-        print(f"Error fetching model from WandB: {e}")
-        raise
-    finally:
-        wandb.finish()
+    print(f"Successfully loaded checkpoint at {artifact_dir}")
+    return checkpoint
