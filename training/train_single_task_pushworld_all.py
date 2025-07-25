@@ -422,8 +422,8 @@ def processing(config: TrainConfig, train_info, elapsed_time):
     if config.track or config.upload_model:
         run.finish()
 
-    print("Final return: ", float(loss_info["eval/returns"][-1]))
-    print("Final solved percentage: ", float(loss_info["eval/solved_percentage"][-1]))
+    print("Final test set return: ", float(loss_info["eval_test/returns_mean"][-1]))
+    print("Final test set solved percentage: ", float(loss_info["eval_test/solved_percentage"][-1]))
 
 
 @pyrallis.wrap()
