@@ -2,7 +2,7 @@
 name = "xminigrid"
 description = "JAX-accelerated meta-reinforcement learning environments inspired by XLand and MiniGrid"
 readme = "README.md"
-requires-python =">=3.9"
+requires-python =">=3.10"
 license = {file = "LICENSE"}
 authors = [
   {name = "Alexander Nikulin", email = "a.p.nikulin@tinkoff.ai"},
@@ -43,22 +43,8 @@ dependencies = [
     "libcst (>=1.8.2,<2.0.0)",
     "nbformat (>=5.10.4,<6.0.0)",
     "pytest (>=8.4.1,<9.0.0)",
+    "gradio (>=5.38.1,<6.0.0)",
 ]
-
-# [tool.poetry.dependencies]
-# jax = {version = "^0.4.27", extras = ["cuda12"]}
-
-# [[tool.poetry.source]]
-# name = "jax"
-# url = "https://storage.googleapis.com/jax-releases/jax_releases.html"
-# priority = "supplemental"
-
-
-# [[tool.poetry.source]]
-# name = "jaxlib"
-# url = "https://storage.googleapis.com/jax-releases/jax_cuda_releases.html"
-# priority = "supplemental"
-
 
 [project.optional-dependencies]
 dev = [
@@ -131,3 +117,7 @@ reportMissingModuleSource = false
 
 pythonVersion = "3.10"
 pythonPlatform = "All"
+
+[tool.poetry.group.dev.dependencies]
+ipykernel = "^6.30.0"
+
