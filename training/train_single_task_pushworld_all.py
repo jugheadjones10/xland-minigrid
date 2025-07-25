@@ -20,7 +20,7 @@ import wandb
 from flax.jax_utils import replicate, unreplicate
 from flax.training import orbax_utils
 from flax.training.train_state import TrainState
-from nn_pushworld import ActorCriticRNN
+from nn_pushworld_all import ActorCriticRNN
 from utils_pushworld_all import Transition, calculate_gae, ppo_update_networks, rollout
 
 import xminigrid.envs.pushworld as pushworld

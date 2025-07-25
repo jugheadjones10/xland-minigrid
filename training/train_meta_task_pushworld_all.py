@@ -43,7 +43,7 @@ class TrainConfig:
     project: str = "PushWorld"
     group: str = "default"
     name: str = "meta-task-ppo"
-    benchmark_id: str = "level0_mini"
+    benchmark_id: str = "level0_transformed_all"
     # If True, track the training progress to wandb
     track: bool = False
     checkpoint_path: Optional[str] = None
