@@ -106,9 +106,9 @@ def make_states(config: TrainConfig):
     train_rng, test_rng = jax.random.split(puzzle_rng)
 
     if config.num_train is not None:
-        assert (
-            config.num_train <= benchmark.num_train_puzzles()
-        ), "num_train is larger than num train available in benchmark"
+        assert config.num_train <= benchmark.num_train_puzzles(), (
+            "num_train is larger than num train available in benchmark"
+        )
         perm = jax.random.permutation(train_rng, benchmark.num_train_puzzles())
         idxs = perm[: config.num_train]
         benchmark = benchmark.replace(train_puzzles=benchmark.train_puzzles[idxs])
@@ -116,9 +116,9 @@ def make_states(config: TrainConfig):
         config.num_train = benchmark.num_train_puzzles()
 
     if config.num_test is not None:
-        assert (
-            config.num_test <= benchmark.num_test_puzzles()
-        ), "num_test is larger than num test available in benchmark"
+        assert config.num_test <= benchmark.num_test_puzzles(), (
+            "num_test is larger than num test available in benchmark"
+        )
         perm = jax.random.permutation(test_rng, benchmark.num_test_puzzles())
         idxs = perm[: config.num_test]
         benchmark = benchmark.replace(test_puzzles=benchmark.test_puzzles[idxs])
@@ -299,30 +299,49 @@ def make_train(
             rng, train_state = update_state[:2]
 
             # EVALUATE AGENT
+            eval_reset_rng = jax.random.key(config.eval_seed)
+            eval_test_rng, eval_train_rng = jax.random.split(eval_reset_rng)
             assert config.num_test is not None, "num_test must be set for evaluation"
             assert config.num_train is not None, "num_train must be set for evaluation"
-            rng, _rng = jax.random.split(rng)
-            eval_rng = jax.random.split(_rng, num=config.num_test)
 
-            eval_puzzles = benchmark.get_test_puzzles()
-
+            eval_test_reset_rng = jax.random.split(eval_test_rng, num=config.num_test)
+            eval_test_puzzles = benchmark.get_test_puzzles()
             # vmap only on rngs
-            eval_stats = jax.vmap(rollout, in_axes=(0, None, None, 0, None, None, None))(
-                eval_rng,
+            eval_test_stats = jax.vmap(rollout, in_axes=(0, None, None, 0, None, None, None))(
+                eval_test_reset_rng,
                 env,
                 puzzle_env_params,
-                eval_puzzles,
+                eval_test_puzzles,
                 train_state,
                 # TODO: make this as a static method mb?
                 jnp.zeros((1, config.rnn_num_layers, config.rnn_hidden_dim)),
                 1,
             )
-            eval_stats = jax.lax.pmean(eval_stats, axis_name="devices")
+            eval_test_stats = jax.lax.pmean(eval_test_stats, axis_name="devices")
+
+            # Eval on train set
+            eval_train_reset_rng = jax.random.split(eval_train_rng, num=config.num_train)
+            eval_train_puzzles = benchmark.get_train_puzzles()
+            eval_train_stats = jax.vmap(rollout, in_axes=(0, None, None, 0, None, None, None))(
+                eval_train_reset_rng,
+                env,
+                puzzle_env_params,
+                eval_train_puzzles,
+                train_state,
+                # TODO: make this as a static method mb?
+                jnp.zeros((1, config.rnn_num_layers, config.rnn_hidden_dim)),
+                1,
+            )
+            eval_train_stats = jax.lax.pmean(eval_train_stats, axis_name="devices")
+
             loss_info.update(
                 {
-                    "eval/returns": eval_stats.reward.mean(0),
-                    "eval/lengths": eval_stats.length.mean(0),
-                    "eval/solved_percentage": eval_stats.solved.sum(0) / config.num_test,
+                    "eval_test/returns_mean": eval_test_stats.reward.mean(0),
+                    "eval_test/lengths": eval_test_stats.length.mean(0),
+                    "eval_test/solved_percentage": eval_test_stats.solved.sum(0) / config.num_test,
+                    "eval_train/returns_mean": eval_train_stats.reward.mean(0),
+                    "eval_train/lengths": eval_train_stats.length.mean(0),
+                    "eval_train/solved_percentage": eval_train_stats.solved.sum(0) / config.num_train,
                     "lr": train_state.opt_state[-1].hyperparams["learning_rate"],
                 }
             )
@@ -408,8 +427,8 @@ def processing(config: TrainConfig, train_info, elapsed_time):
     if config.track or config.upload_model:
         run.finish()
 
-    print("Final return: ", float(loss_info["eval/returns"][-1]))
-    print("Final solved percentage: ", float(loss_info["eval/solved_percentage"][-1]))
+    print("Final test set return: ", float(loss_info["eval_test/returns_mean"][-1]))
+    print("Final test set solved percentage: ", float(loss_info["eval_test/solved_percentage"][-1]))
 
 
 @pyrallis.wrap()
