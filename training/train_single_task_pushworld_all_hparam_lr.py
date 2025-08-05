@@ -146,11 +146,6 @@ class TrainConfig:
 
 
 def make_states(config: TrainConfig):
-    # for learning rate scheduling
-    # def linear_schedule(count):
-    #     frac = 1.0 - (count // (config.num_minibatches * config.update_epochs)) / config.num_updates
-    #     return config.lr * frac
-
     # setup environment
     env = SingleTaskPushWorldEnvironmentAll()
     env_params = env.default_params()
@@ -242,7 +237,6 @@ def make_train(
             optax.inject_hyperparams(optax.adam)(learning_rate=linear_schedule, eps=1e-8),  # eps=1e-5
         )
         train_state = TrainState.create(apply_fn=network.apply, params=network_params, tx=tx)
-        # train_state = create_train_state(linear_schedule, config, network, network_params)
 
         # INIT ENV
         rng, _rng = jax.random.split(rng)
@@ -409,52 +403,37 @@ def make_train(
         # Create a sequence of numbers from 0 to num_updates-1 for progress tracking
         update_indices = jnp.arange(config.num_updates)
         runner_state, loss_info = jax.lax.scan(_update_step, runner_state, update_indices, config.num_updates)
-        return {"runner_state": runner_state[1], "loss_info": loss_info}
+        # return {"runner_state": runner_state[1], "loss_info": loss_info}
+        return {"loss_info": loss_info}
 
     return train
 
 
-def create_train_state(lr: float, config: TrainConfig, network: ActorCriticRNN, network_params: jax.Array):
-    """Creates a single TrainState for a given learning rate."""
-
-    def linear_schedule(count):
-        frac = 1.0 - (count // (config.num_minibatches * config.update_epochs)) / config.num_updates
-        return lr * frac
-
-    # TODO: come back to this and check if it is right
-    # transition_steps = config.num_updates * config.update_epochs * config.num_minibatches
-    # lr_schedule = optax.linear_schedule(init_value=lr, end_value=0.0, transition_steps=transition_steps)
-    tx = optax.chain(
-        optax.clip_by_global_norm(config.max_grad_norm),
-        optax.inject_hyperparams(optax.adam)(learning_rate=linear_schedule, eps=1e-8),  # eps=1e-5
-    )
-    return TrainState.create(apply_fn=network.apply, params=network_params, tx=tx)
-
-
 def train(config: TrainConfig):
-    with jax.checking_leaks():
-        # removing existing checkpoints if any
-        if config.checkpoint_path is not None and os.path.exists(config.checkpoint_path):
-            shutil.rmtree(config.checkpoint_path)
+    # with jax.checking_leaks():
+    # removing existing checkpoints if any
+    if config.checkpoint_path is not None and os.path.exists(config.checkpoint_path):
+        shutil.rmtree(config.checkpoint_path)
 
-        rng, env, env_params, benchmark, init_hstate, network, network_params = make_states(config)
+    rng, env, env_params, benchmark, init_hstate, network, network_params = make_states(config)
 
-        lr_search = jnp.array([0.00005, 0.0001, 0.0005, 0.001, 0.005, 0.01])
+    lr_search = jnp.array([0.00005, 0.0001, 0.0005, 0.001, 0.005, 0.01])
 
-        num_seeds = 4
-        rngs = jax.random.split(rng, num_seeds)
+    num_seeds = 4
+    rngs = jax.random.split(rng, num_seeds)
 
-        train_fn = make_train(env, env_params, benchmark, config)
-        inner_vmap = jax.vmap(train_fn, in_axes=(0, None, None, None, None))
-        grid_search_vmap = jax.vmap(inner_vmap, in_axes=(None, 0, None, None, None))
+    train_fn = make_train(env, env_params, benchmark, config)
+    inner_vmap = jax.vmap(train_fn, in_axes=(0, None, None, None, None))
+    grid_search_vmap = jax.vmap(inner_vmap, in_axes=(None, 0, None, None, None))
 
-        print("Compiling and training...")
-        t = time.time()
-        train_info = jax.block_until_ready(grid_search_vmap(rngs, lr_search, network, network_params, init_hstate))
-        elapsed_time = time.time() - t
-        print(f"Done in {elapsed_time:.2f}s.")
+    print("Compiling and training...")
+    t = time.time()
+    # Might need to jax.jit the below?
+    train_info = jax.block_until_ready(grid_search_vmap(rngs, lr_search, network, network_params, init_hstate))
+    elapsed_time = time.time() - t
+    print(f"Done in {elapsed_time:.2f}s.")
 
-        return train_info, elapsed_time
+    return train_info, elapsed_time
 
 
 def processing(config: TrainConfig, train_info, elapsed_time):
