@@ -16,7 +16,7 @@ from xminigrid.envs.pushworld.wrappers import GoalObservationWrapper, GymAutoRes
 
 
 # for tracking per-episode statistics during meta-RL evaluation
-class MetaRolloutStats(struct.PyTreeNode):
+class VideoMetaRolloutStats(struct.PyTreeNode):
     episode_rewards: jax.Array  # Shape: [max_episodes] - reward for each episode
     episode_lengths: jax.Array  # Shape: [max_episodes] - length of each episode
     episode_solved: jax.Array  # Shape: [max_episodes] - whether each episode was solved
@@ -139,8 +139,26 @@ def meta_rollout_video(
     network: ActorCriticRNN,
     init_hstate: jax.Array,
     num_consecutive_episodes: int = 1,
-) -> MetaRolloutStats:
+) -> VideoMetaRolloutStats:
     """Rollout that tracks statistics for each individual episode."""
+
+    def _reset_env_fn(carry_components):
+        """Function to execute when the episode has ended."""
+        timestep, env_params, rng = carry_components
+        key, _ = jax.random.split(rng)
+        reset_timestep = env.reset(env_params, key)
+
+        # Return a new timestep with the reset state and observation
+        return timestep.replace(
+            state=reset_timestep.state,
+            observation=reset_timestep.observation,
+        )
+
+    def _identity_fn(carry_components):
+        """Function to execute when the episode has not ended."""
+        timestep, _, _ = carry_components
+        # Return the timestep unchanged
+        return timestep
 
     def _cond_fn(carry):
         (
@@ -217,6 +235,14 @@ def meta_rollout_video(
         current_episode_reward = jnp.where(episode_ended, 0.0, current_episode_reward)
         current_episode_length = jnp.where(episode_ended, 0, current_episode_length)
 
+        operands = (timestep, env_params, rng)
+        timestep = jax.lax.cond(
+            episode_ended,
+            _reset_env_fn,  # The function to run if True
+            _identity_fn,  # The function to run if False
+            operands,  # The arguments passed to either function
+        )
+
         carry = (
             rng,
             stats,
@@ -235,7 +261,7 @@ def meta_rollout_video(
     episode_lengths = jnp.zeros(num_consecutive_episodes, dtype=jnp.int32)
     episode_solved = jnp.zeros(num_consecutive_episodes, dtype=jnp.int32)
 
-    initial_stats = MetaRolloutStats(
+    initial_stats = VideoMetaRolloutStats(
         episode_rewards=episode_rewards,
         episode_lengths=episode_lengths,
         episode_solved=episode_solved,
