@@ -86,16 +86,19 @@ class TrainConfig:
 
     def __post_init__(self):
         num_devices = jax.local_device_count()
+        assert self.num_envs % num_devices == 0
+
         # splitting computation across all available devices
         self.num_envs_per_device = self.num_envs // num_devices
-        self.total_timesteps_per_device = self.total_timesteps // num_devices
-        self.eval_num_envs_per_device = self.eval_num_envs // num_devices
-        assert self.num_envs % num_devices == 0
-        self.num_meta_updates = round(
-            self.total_timesteps_per_device / (self.num_envs_per_device * self.num_steps_per_env)
-        )
-        self.num_inner_updates = self.num_steps_per_env // self.num_steps_per_update
-        assert self.num_steps_per_env % self.num_steps_per_update == 0
+
+        self.meta_updates_per_schedule = 10
+        self.steps_schedule = [100, 200, 300, 400, 500]
+        self.max_steps = max(self.steps_schedule)
+        self.total_timesteps_per_device = sum(self.steps_schedule) * self.meta_updates_per_schedule
+
+        self.num_meta_updates = self.meta_updates_per_schedule * len(self.steps_schedule)
+        self.num_inner_updates = 1
+
         print(f"Num devices: {num_devices}, Num meta updates: {self.num_meta_updates}")
 
 
@@ -198,11 +201,11 @@ def make_train(
         init_hstate: jax.Array,
     ):
         eval_hstate = init_hstate[0][None]
-        steps_schedule = jnp.array([100, 200, 300, 400, 500])
 
         # META TRAIN LOOP
-        def _meta_step(meta_state, _):
-            rng, meta_update_count, train_state = meta_state
+        # @partial(jax.jit, static_argnums=(1,))
+        def _meta_step(meta_state, num_steps_per_update):
+            rng, train_state = meta_state
 
             # INIT ENV
             rng, _rng1, _rng2 = jax.random.split(rng, num=3)
@@ -258,7 +261,7 @@ def make_train(
 
                 initial_hstate = runner_state[-1]
                 # transitions: [seq_len, batch_size, ...]
-                runner_state, transitions = jax.lax.scan(_env_step, runner_state, None, config.num_steps_per_update)
+                runner_state, transitions = jax.lax.scan(_env_step, runner_state, None, num_steps_per_update)
 
                 # CALCULATE ADVANTAGE
                 rng, train_state, timestep, prev_action, prev_reward, hstate = runner_state
@@ -388,13 +391,20 @@ def make_train(
                 }
             )
 
-            meta_state = (rng, meta_update_count + 1, train_state)
+            meta_state = (rng, train_state)
             return meta_state, loss_info
 
-        meta_update_count = 0
-        meta_state = (rng, meta_update_count, train_state)
-        meta_state, loss_info = jax.lax.scan(_meta_step, meta_state, None, config.num_meta_updates)
-        return {"state": meta_state[-1], "loss_info": loss_info}
+        schedule_list = []
+        for num_steps in config.steps_schedule:
+            schedule_list.extend([num_steps] * config.meta_updates_per_schedule)
+
+        meta_state = (rng, train_state)
+        all_loss_info = []
+        for num_steps in schedule_list:
+            meta_state, loss_info = _meta_step(meta_state, num_steps)
+            all_loss_info.append(loss_info)
+
+        return {"state": meta_state[-1], "loss_info": all_loss_info}
 
     return train
 
@@ -466,9 +476,9 @@ def processing(config: TrainConfig, train_info, elapsed_time):
         loss_info.pop("eval_train/episode_solved_rates")
 
         for i in range(config.num_meta_updates):
-            total_transitions += config.num_steps_per_env * config.num_envs_per_device * jax.local_device_count()
+            # total_transitions += config.num_steps_per_env * config.num_envs_per_device * jax.local_device_count()
             info = jtu.tree_map(lambda x: x[i].item(), loss_info)
-            info["transitions"] = total_transitions
+            # info["transitions"] = total_transitions
             wandb.log(info)
 
         run.summary["training_time"] = elapsed_time
