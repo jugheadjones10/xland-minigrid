@@ -91,8 +91,10 @@ class TrainConfig:
         # splitting computation across all available devices
         self.num_envs_per_device = self.num_envs // num_devices
 
-        self.meta_updates_per_schedule = 10
-        self.steps_schedule = [100, 200, 300, 400, 500]
+        # self.meta_updates_per_schedule = 10
+        self.meta_updates_per_schedule = 2
+        # self.steps_schedule = [100, 200, 300, 400, 500]
+        self.steps_schedule = [100, 200]
         self.max_steps = max(self.steps_schedule)
         self.total_timesteps_per_device = sum(self.steps_schedule) * self.meta_updates_per_schedule
 
@@ -403,7 +405,10 @@ def make_train(
             meta_state, loss_info = _meta_step(meta_state, num_steps)
             all_loss_info.append(loss_info)
 
-        return {"state": meta_state[-1], "loss_info": all_loss_info}
+        keys = all_loss_info[0].keys()
+        transposed_loss_info = {k: jnp.stack([d[k] for d in all_loss_info]) for k in keys}
+
+        return {"state": meta_state[-1], "loss_info": transposed_loss_info}
 
     return train
 
