@@ -4,9 +4,9 @@
 import os
 import shutil
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from functools import partial
-from typing import Optional
+from typing import List, Optional
 
 import jax
 import jax.numpy as jnp
@@ -50,6 +50,10 @@ class TrainConfig:
     # Upload to W&B
     upload_model: bool = False
 
+    # Specific to changing eplen
+    steps_schedule: List[int] = field(default_factory=lambda: [100, 200, 300, 400, 500])
+    meta_updates_per_schedule: int = 10
+
     train_test_same: bool = False
     num_train: Optional[int] = None
     num_test: Optional[int] = None
@@ -91,11 +95,6 @@ class TrainConfig:
         # splitting computation across all available devices
         self.num_envs_per_device = self.num_envs // num_devices
 
-        # self.meta_updates_per_schedule = 10
-        self.meta_updates_per_schedule = 2
-        # self.steps_schedule = [100, 200, 300, 400, 500]
-        self.steps_schedule = [100, 200]
-        self.max_steps = max(self.steps_schedule)
         self.total_timesteps_per_device = sum(self.steps_schedule) * self.meta_updates_per_schedule
 
         self.num_meta_updates = self.meta_updates_per_schedule * len(self.steps_schedule)
