@@ -203,7 +203,6 @@ def make_train(
         eval_hstate = init_hstate[0][None]
 
         # META TRAIN LOOP
-        # @partial(jax.jit, static_argnums=(1,))
         def _meta_step(meta_state, num_steps_per_update):
             rng, train_state = meta_state
 
