@@ -4,9 +4,9 @@
 import os
 import shutil
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from functools import partial
-from typing import Optional
+from typing import List, Optional
 
 import imageio
 import jax
@@ -106,6 +106,9 @@ class TrainConfig:
     train_test_same: bool = False
     num_train: Optional[int] = None
     num_test: Optional[int] = None
+
+    # For lr hparam tuning
+    lr_hparams: List[float] = field(default_factory=lambda: [0.00005, 0.0001, 0.0005, 0.001, 0.005, 0.01])
 
     img_obs: bool = False
     # agent
@@ -417,8 +420,7 @@ def train(config: TrainConfig):
 
     rng, env, env_params, benchmark, init_hstate, network, network_params = make_states(config)
 
-    lr_search = jnp.array([0.00005, 0.0001, 0.0005, 0.001, 0.005, 0.01])
-
+    lr_search = jnp.array(config.lr_hparams)
     train_fn = make_train(env, env_params, benchmark, config)
     train_fn_vmap = jax.vmap(train_fn, in_axes=(0, None, None, None, None))
 
