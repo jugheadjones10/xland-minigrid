@@ -2,9 +2,10 @@ import os
 
 import gradio as gr
 
+# VIDEO_ROOT = "/Users/kimyoungjin/Projects/monkey/xland-minigrid/experiments_complete/rl2-level0-all-4000train-400test-488steps-videos/pushworld_videos"
 VIDEO_ROOT = "pushworld_videos"
 
-MAX_VIDEOS_DISPLAY = 100
+MAX_VIDEOS_DISPLAY = 50
 VIDEOS_PER_ROW = 5
 
 
@@ -52,8 +53,7 @@ def get_videos_for_grid(dataset, status):
 with gr.Blocks(theme=gr.themes.Soft()) as demo:
     gr.Markdown(
         """
-        # Puzzle Solver Video Dashboard
-        Use the filters below to browse videos. Each video can be played directly in the grid.
+        # PushWorld Level 0 All RL^2 Videos
         """
     )
 
@@ -86,4 +86,4 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
     demo.load(fn=get_videos_for_grid, inputs=[dataset_filter, status_filter], outputs=video_outputs)
 
 
-demo.launch()
+demo.launch(share=True)
