@@ -26,6 +26,10 @@ COPY pyproject.toml pyproject.toml
 COPY poetry.lock poetry.lock
 COPY LICENSE LICENSE
 COPY README.md README.md
+
+# Copy .git so that W&B can track git version
+COPY .git .git
+
 # src needs to come before poetry install since we are installing the current project as well
 COPY ./src /src
 
