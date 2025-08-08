@@ -27,6 +27,12 @@ module "cleanrl" {
     # "m6gd.medium", # 1 vCPU, 4GB, $0.0452
 
     # ARM-based + GPU
-    "g5g.2xlarge"
+    "g5g.2xlarge",
+
+    # AMD + GPU
+    "g4dn.2xlarge",
+    "g4dn.12xlarge",
+    "p3.2xlarge",
+    "p3.8xlarge"
   ]
 }

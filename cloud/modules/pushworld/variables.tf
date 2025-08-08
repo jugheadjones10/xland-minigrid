@@ -5,13 +5,13 @@ variable "max_vcpus" {
 }
 
 variable "on_demand_allocation_strategy" {
-  description = "The allocation strateg for the on-demand computing environment (e.g. `BEST_FIT`, `BEST_FIT_PROGRESSIVE`; see https://docs.aws.amazon.com/batch/latest/userguide/allocation-strategies.html)"
+  description = "The allocation strategy for the on-demand computing environment (e.g. `BEST_FIT`, `BEST_FIT_PROGRESSIVE`; see https://docs.aws.amazon.com/batch/latest/userguide/allocation-strategies.html)"
   type        = string
   default     = "BEST_FIT"
 }
 
 variable "spot_allocation_strategy" {
-  description = "The allocation strateg for the on-demand computing environment (e.g. `BEST_FIT`, `BEST_FIT_PROGRESSIVE`, or `SPOT_CAPACITY_OPTIMIZED`; see https://docs.aws.amazon.com/batch/latest/userguide/allocation-strategies.html)"
+  description = "The allocation strategy for the on-demand computing environment (e.g. `BEST_FIT`, `BEST_FIT_PROGRESSIVE`, or `SPOT_CAPACITY_OPTIMIZED`; see https://docs.aws.amazon.com/batch/latest/userguide/allocation-strategies.html)"
   type        = string
   default     = "BEST_FIT"
 }

@@ -1,0 +1,42 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug Pytest",
+      "type": "python",
+      "request": "launch",
+      "module": "pytest",
+      "args": [
+        "test_actions_all.py::TestActionCorrectness::test_action_produces_expected_result[complex_puzzle_1_left]",
+        "-v",
+        "-s"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}/src/xminigrid/envs/pushworld"
+    },
+    {
+      "name": "Debug train_meta_task_pushworld_all_changing-eplen.py",
+      "type": "python",
+      "request": "launch",
+      "module": "train_single_task_pushworld_all",
+      "args": [
+        "--benchmark_id",
+        "level0_transformed_all",
+        "--total_timesteps",
+        "40",
+        "--num_steps",
+        "10",
+        "--num_envs",
+        "4",
+        "--num_minibatches",
+        "4",
+        "--num_train",
+        "10",
+        "--num_test",
+        "1"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}/training"
+    }
+  ]
+}

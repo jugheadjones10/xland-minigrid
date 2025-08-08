@@ -1,5 +1,17 @@
 version: "3"
 tasks:
+  test-changing-eplen:
+    cmds:
+      - |
+        python training/train_meta_task_pushworld_all_changing-eplen.py \
+        --benchmark_id level0_transformed_all \
+        --steps_schedule [100,200] \
+        --meta_updates_per_schedule 2 \
+        --num_envs 4 \
+        --num_minibatches 4 \
+        --num_train 10 \
+        --num_test 1
+
   build-docker-amd:
     cmds:
       - docker build -t juggy69/pushworld:amd --platform linux/amd64 .
@@ -16,52 +28,200 @@ tasks:
     cmds:
       - docker run -it pushworld:arm
 
+  test-local-run-mini:
+    vars:
+      COMMAND: >-
+        poetry run python training/test.py
+    cmds:
+      - |
+        python -m scripts.submit_exp \
+        --docker-tag juggy69/pushworld:arm \
+        --archs "linux/arm64" \
+        --exp-script "pushworld" \
+        --build \
+        --num-seed 1 \
+        --command "{{.COMMAND}}"
+
+  # Development version with volume mounting - no rebuild needed
+  test-local-dev:
+    vars:
+      COMMAND: >-
+        poetry run python training/train_meta_task_pushworld_all.py
+        --benchmark_id level0_transformed_all
+        --total_timesteps 10_000_000
+        --num_envs 4096
+        --num_steps_per_env 500
+        --num_steps_per_update 500
+        --track True
+        --upload_model True
+    cmds:
+      # -v "$(pwd)/src:/src" \
+      - |
+        docker run -it --rm --cpuset-cpus="0" \
+        -v "$(pwd)/training:/training" \
+        -v "$(pwd)/src:/src" \
+        juggy69/pushworld:arm \
+        bash -c "{{.COMMAND}}"
+
   test-local-run:
     vars:
       COMMAND: >-
-        poetry run python training/train_meta_task_pushworld.py
-        --benchmark_id level0_transformed_base
-        --total_timesteps 1000_000_000
-        --num_envs 8192
+        poetry run python training/train_meta_task_pushworld_all.py
+        --benchmark_id level0_transformed_all
+        --total_timesteps 10_000_000
+        --num_envs 4096
         --num_steps_per_env 500
         --num_steps_per_update 500
         --train_test_same False
-        --num_train 2000
-        --num_test 200
         --track True
         --upload_model True
     cmds:
       - |
-        python -m scripts.submit_exp \
+        poetry run python -m scripts.submit_exp \
         --docker-tag juggy69/pushworld:arm \
         --archs "linux/arm64" \
         --exp-script "pushworld" \
         --num-seed 1 \
         --command "{{.COMMAND}}"
 
-  meta-task-base:
+  meta-task-all-amd:
     vars:
       COMMAND: >-
-        poetry run python training/train_meta_task_pushworld.py
-        --benchmark_id level0_transformed_base
-        --total_timesteps 1000_000_000
-        --num_envs 8192
+        python training/train_meta_task_pushworld_all.py
+        --benchmark_id level0_transformed_all
+        --name "ppo-level0-all"
+        --total_timesteps 10_000_000
+        --num_envs 2048
         --num_steps_per_env 500
         --num_steps_per_update 500
         --train_test_same False
-        --num_train 2000
-        --num_test 200
+        --track True
+        --upload_model True
+        --checkpoint_path /checkpoint
+    cmds:
+      - |
+        python -m scripts.submit_exp \
+        --docker-tag juggy69/pushworld:amd \
+        --exp-script "pushworld" \
+        --num-seed 1 \
+        --command "{{.COMMAND}}" \
+        --job-queue "g4dn-12xlarge" \
+        --num-vcpu 48 \
+        --num-memory 100000 \
+        --num-gpu 4 \
+        --provider aws
+
+  meta-task-all-arm:
+    vars:
+      COMMAND: >-
+        poetry run python training/train_meta_task_pushworld_all.py
+        --benchmark_id level0_transformed_all
+        --total_timesteps 10_000_000
+        --num_envs 4096
+        --num_steps_per_env 500
+        --num_steps_per_update 500
+        --train_test_same False
         --track True
         --upload_model True
     cmds:
       - |
-        python -m scripts.submit_exp \
+        poetry run python -m scripts.submit_exp \
         --docker-tag juggy69/pushworld:arm \
         --archs "linux/arm64" \
+        --build \
         --exp-script "pushworld" \
         --num-seed 1 \
         --command "{{.COMMAND}}" \
-        --job-queue "g5g-2xlarge" \
+        --job-queue "g4dn-2xlarge" \
         --num-vcpu 8 \
-        --num-memory 8000 \
+        --num-memory 24000 \
+
+  rl2-level0-all-changing-eplen-amd:
+    vars:
+      COMMAND: >-
+        python training/train_meta_task_pushworld_all_changing-eplen.py
+        --benchmark_id 'level0_transformed_all'
+        --steps_schedule [100,200]
+        --meta_updates_per_schedule 50
+        --num_envs 256
+        --num_train 1000
+        --num_test 100
+        --name 'rl2-level0-all-changing-eplen-2steps-50updates'
+        --track True
+        --upload_model True
+        --checkpoint_path '/checkpoint'
+    cmds:
+      - |
+        python -m scripts.submit_exp \
+        --docker-tag juggy69/pushworld:amd \
+        --exp-script "pushworld" \
+        --num-seed 1 \
+        --command "{{.COMMAND}}" \
+        --job-queue "g4dn-12xlarge" \
+        --num-vcpu 32 \
+        --num-memory 50000 \
+        --num-gpu 4 \
         --provider aws
+
+  ppo-level0-all-updated-hparams-amd:
+    vars:
+      COMMAND: >-
+        python training/train_single_task_pushworld_all.py
+        --benchmark_id 'level0_transformed_all'
+        --total_timesteps 100_000_000
+        --num_envs 2048
+        --num_steps 100
+        --lr 0.00001
+        --num_minibatches 4
+        --name 'ppo-level0-all-244steps-new_hparams-lr-minibatches4'
+        --track True
+        --upload_model True
+        --checkpoint_path '/checkpoint'
+    cmds:
+      - |
+        python -m scripts.submit_exp \
+        --run-name "ppo-level0-all-244steps-new_hparams-lr-minibatches4" \
+        --docker-tag juggy69/pushworld:amd \
+        --exp-script "pushworld" \
+        --num-seed 1 \
+        --command "{{.COMMAND}}" \
+        --job-queue "g4dn-12xlarge" \
+        --num-vcpu 32 \
+        --num-memory 50000 \
+        --num-gpu 4 \
+        --provider aws
+
+  rl2-level0-all-updated-hparams-amd:
+    vars:
+      COMMAND: >-
+        python training/train_meta_task_pushworld_all.py
+        --benchmark_id 'level0_transformed_all'
+        --total_timesteps 200_000_000
+        --num_envs 4096
+        --num_steps 100
+        --ent_coef 0.5
+        --lr 0.00001
+        --name 'ppo-level0-all-488steps-new_hparams'
+        --track True
+        --upload_model True
+        --checkpoint_path '/checkpoint'
+    cmds:
+      - |
+        python -m scripts.submit_exp \
+        --run-name "ppo-level0-all-488steps-new_hparams" \
+        --docker-tag juggy69/pushworld:amd \
+        --exp-script "pushworld" \
+        --num-seed 1 \
+        --command "{{.COMMAND}}" \
+        --job-queue "g4dn-12xlarge" \
+        --num-vcpu 32 \
+        --num-memory 50000 \
+        --num-gpu 4 \
+        --provider aws
+
+  # aws-exec:
+  # aws ecs execute-command \
+  #   --cluster g4dn-2xlarge_Batch_f22c8cc9-d972-339b-8be0-f9fb6dec55f5 \
+  #   --task arn:aws:ecs:ap-southeast-1:725446301671:task/g4dn-2xlarge_Batch_f22c8cc9-d972-339b-8be0-f9fb6dec55f5/01d69842512f473bb7de36f9a37aedbc \
+  #   --command "/bin/bash" \
+  #   --interactive

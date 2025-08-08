@@ -32,13 +32,6 @@ COPY ./src /src
 # Configure poetry to not create a virtual env
 RUN poetry config virtualenvs.create false
 
-# Install dependencies
-# RUN if [ "$INSTALL_CI" = "true" ]; then \
-#         poetry install --extras "baselines ci"; \
-#     else \
-#         poetry install --extras "baselines"; \
-#     fi
-
 RUN poetry install --extras baselines
 
 # ----------------- ADD THIS STEP -----------------

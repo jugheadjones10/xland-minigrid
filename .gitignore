@@ -175,3 +175,7 @@ g
 scripts/*testing*
 configs/wip
 scripts/eval_example.py
+
+**/*.pkl
+**/*.pkg
+**/*.pem
