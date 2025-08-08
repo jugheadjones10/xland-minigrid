@@ -23,6 +23,8 @@ parser.add_argument('--num-seed', type=int, default=1,
     help='number of random seeds for experiments')
 
 # experiment submission
+parser.add_argument('--run-name', type=str, default="",
+    help='the name of the run')
 parser.add_argument('--job-queue', type=str, default="m6gd-medium",
     help='the name of the job queue')
 parser.add_argument('--docker-tag', type=str, default="juggy69/rl-for-dummies:latest",
@@ -65,6 +67,7 @@ if args.build:
             shell=True,
             check=True,
         )
+
     # We do not care about architecture for now (we are defaulting to amd64) so we do not need buildx yet.
     # output_type_str = "--output=type=registry" if args.push else "--output=type=docker"
     # subprocess.run(
@@ -122,18 +125,24 @@ if args.provider == "aws":
                 jobDefinitionName=job_def_name,
                 type="container",
                 containerProperties={
+                    "jobRoleArn": "arn:aws:iam::725446301671:role/ecs-task-execution-role",
                     "image": args.docker_tag,
                     "vcpus": args.num_vcpu,
                     "memory": args.num_memory,
                     "command": [
                         "/bin/bash",
                     ],
+                    # If you want to use AWS ECS Exec
+                    # TODO: make these configurable using args
+                    "enableExecuteCommand": True,
+                    "linuxParameters": {"sharedMemorySize": 20000},
                 },
             )
             response = client.submit_job(
                 jobName=job_name,
                 jobQueue=args.job_queue,
                 jobDefinition=job_def_name,
+                tags={"run_name": args.run_name},
                 containerOverrides={
                     "vcpus": args.num_vcpu,
                     "memory": args.num_memory,

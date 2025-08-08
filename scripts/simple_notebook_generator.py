@@ -91,6 +91,7 @@ PRESETS = {
         "nn_file": "nn_pushworld_all.py",
         "output_name": "pushworld_meta_task_all",
         "title": "Meta-task PushWorld Training (All Environment)",
+        "video_utils_file": "video_meta_pushworld_all.py",
         "train_config": """config = TrainConfig(
     benchmark_id="level0_transformed_all",
     total_timesteps=1000_000_000,
@@ -116,6 +117,7 @@ class Config:
     train_file: str = "train_single_task_pushworld.py"
     eval_utils_file: str = "eval_utils.py"
     eval_file: str = "eval_single_pushworld.py"
+    video_utils_file: Optional[str] = None
 
     # Training configuration code (as string)
     train_config: str = """config = TrainConfig(
@@ -393,18 +395,19 @@ def generate_notebook(cells, source_dir, output_path):
 
 # Example usage for PushWorld
 def generate_pushworld_notebook(source_dir, output_dir, config: Config):
-    cells = [
-        {
-            "type": "markdown",
-            "content": f"# {config.notebook_title}",
-        },
-        {
-            "type": "code",
-            "content": '# Install if needed\n# !pip install "xminigrid[baselines] @ git+https://github.com/jugheadjones10/xland-minigrid.git"',
-        },
-        {
-            "type": "code",
-            "content": """import os
+    cells = (
+        [
+            {
+                "type": "markdown",
+                "content": f"# {config.notebook_title}",
+            },
+            {
+                "type": "code",
+                "content": '# Install if needed\n# !pip install "xminigrid[baselines] @ git+https://github.com/jugheadjones10/xland-minigrid.git"',
+            },
+            {
+                "type": "code",
+                "content": """import os
 import shutil
 import time #noqa
 import os #noqa
@@ -413,6 +416,7 @@ from typing import TypedDict, Optional, Literal #noqa
 import numpy as np #noqa
 import importlib #noqa
 import os #noqa
+import imageio #noqa
 
 import jax #noqa
 import jax.numpy as jnp #noqa
@@ -438,7 +442,7 @@ from functools import partial #noqa
 
 import xminigrid.envs.pushworld as pushworld
 from xminigrid.envs.pushworld.benchmarks import Benchmark, BenchmarkAll
-from xminigrid.envs.pushworld.constants import Tiles, NUM_TILES, SUCCESS_REWARD
+from xminigrid.envs.pushworld.constants import Tiles, NUM_TILES, SUCCESS_REWARD, LEVEL0_ALL_SIZE
 from xminigrid.envs.pushworld.environment import Environment, EnvParams, EnvParamsT
 from xminigrid.envs.pushworld.envs.single_task_pushworld import SingleTaskPushWorldEnvironment, SingleTaskPushWorldEnvParams
 from xminigrid.envs.pushworld.envs.meta_task_pushworld import MetaTaskPushWorldEnvironment
@@ -450,41 +454,56 @@ from xminigrid.envs.pushworld.wrappers import GoalObservationWrapper, GymAutoRes
 from xminigrid.envs.pushworld.types import State, TimeStep, StepType, EnvCarry, PushWorldPuzzle, PushWorldPuzzleAll
 from xminigrid.envs.pushworld.grid import get_obs_from_puzzle
 from IPython.display import Video, HTML, display""",
-        },
-        {"type": "markdown", "content": "## Networks"},
-        {"type": "code", "files": [config.nn_file], "processors": ["remove_imports"]},
-        {"type": "markdown", "content": "## Utils"},
-        {"type": "code", "files": [config.utils_file], "processors": ["remove_imports"]},
-        {"type": "markdown", "content": "## Training"},
-        {
-            "type": "code",
-            "files": [config.train_file],
-            "processors": ["extract_training_main_functions"],
-        },
-        {"type": "markdown", "content": "## Processing"},
-        {"type": "code", "files": [config.train_file], "processors": ["extract_processing_function"]},
-        {"type": "markdown", "content": "## Evaluation"},
-        {"type": "code", "files": [config.eval_utils_file], "processors": ["remove_imports"]},
-        {
-            "type": "code",
-            "files": [config.eval_file],
-            "processors": ["remove_imports"],
-        },
-        {"type": "markdown", "content": "## Run Training"},
-        {
-            "type": "code",
-            "content": """import os, wandb
+            },
+            {"type": "markdown", "content": "## Networks"},
+            {"type": "code", "files": [config.nn_file], "processors": ["remove_imports"]},
+            {"type": "markdown", "content": "## Utils"},
+            {"type": "code", "files": [config.utils_file], "processors": ["remove_imports"]},
+            {"type": "markdown", "content": "## Training"},
+            {
+                "type": "code",
+                "files": [config.train_file],
+                "processors": ["extract_training_main_functions"],
+            },
+            {"type": "markdown", "content": "## Processing"},
+            {"type": "code", "files": [config.train_file], "processors": ["extract_processing_function"]},
+            {"type": "markdown", "content": "## Evaluation"},
+            {"type": "code", "files": [config.eval_utils_file], "processors": ["remove_imports"]},
+            {
+                "type": "code",
+                "files": [config.eval_file],
+                "processors": ["remove_imports"],
+            },
+        ]
+        + (
+            [
+                {"type": "markdown", "content": "## Video Utils"},
+                {
+                    "type": "code",
+                    "files": [config.video_utils_file],
+                    "processors": ["remove_imports"],
+                },
+            ]
+            if config.video_utils_file
+            else []
+        )
+        + [
+            {"type": "markdown", "content": "## Run Training"},
+            {
+                "type": "code",
+                "content": """import os, wandb
 os.environ["WANDB_API_KEY"] = "" # fill in
 wandb.login(key=os.environ["WANDB_API_KEY"], relogin=True)""",
-        },
-        {
-            "type": "code",
-            "content": config.train_config,
-        },
-        {"type": "code", "files": [config.train_file], "processors": ["extract_init_code"]},
-    ]
+            },
+            {
+                "type": "code",
+                "content": config.train_config,
+            },
+            {"type": "code", "files": [config.train_file], "processors": ["extract_init_code"]},
+        ]
+    )
 
-    return generate_notebook(cells, source_dir, output_dir / f"{config.output_name}_base.ipynb")
+    return generate_notebook(cells, source_dir, output_dir / f"{config.output_name}.ipynb")
 
 
 @pyrallis.wrap()
