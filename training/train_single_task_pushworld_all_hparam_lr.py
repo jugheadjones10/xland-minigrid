@@ -222,8 +222,8 @@ def make_train(
     config: TrainConfig,
 ):
     def train(
-        rng: jax.Array,
         lr: jax.Array,
+        rng: jax.Array,
         network: ActorCriticRNN,
         network_params: jax.Array,
         init_hstate: jax.Array,
@@ -419,17 +419,19 @@ def train(config: TrainConfig):
 
     lr_search = jnp.array([0.00005, 0.0001, 0.0005, 0.001, 0.005, 0.01])
 
-    num_seeds = 4
-    rngs = jax.random.split(rng, num_seeds)
-
     train_fn = make_train(env, env_params, benchmark, config)
-    inner_vmap = jax.vmap(train_fn, in_axes=(0, None, None, None, None))
-    grid_search_vmap = jax.vmap(inner_vmap, in_axes=(None, 0, None, None, None))
+    train_fn_vmap = jax.vmap(train_fn, in_axes=(0, None, None, None, None))
 
-    print("Compiling and training...")
+    print("Compiling...")
     t = time.time()
     # Might need to jax.jit the below?
-    train_info = jax.block_until_ready(grid_search_vmap(rngs, lr_search, network, network_params, init_hstate))
+    train_fn_jit_vmap = train_fn_vmap.lower(lr_search, rng, network, network_params, init_hstate).compile()
+    elapsed_time = time.time() - t
+    print(f"Done in {elapsed_time:.2f}s.")
+
+    print("Training...")
+    t = time.time()
+    train_info = jax.block_until_ready(train_fn_jit_vmap(lr_search, rng, network, network_params, init_hstate))
     elapsed_time = time.time() - t
     print(f"Done in {elapsed_time:.2f}s.")
 
