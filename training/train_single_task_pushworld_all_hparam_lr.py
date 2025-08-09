@@ -223,12 +223,12 @@ def make_train(
     env_params: EnvParams,
     benchmark: BenchmarkAll,
     config: TrainConfig,
+    network: ActorCriticRNN,
+    network_params: jax.Array,
 ):
     def train(
         lr: jax.Array,
         rng: jax.Array,
-        network: ActorCriticRNN,
-        network_params: jax.Array,
         init_hstate: jax.Array,
     ):
         def linear_schedule(count):
@@ -370,7 +370,8 @@ def make_train(
                 eval_test_puzzles,
                 train_state,
                 # TODO: make this as a static method mb?
-                jnp.zeros((1, config.rnn_num_layers, config.rnn_hidden_dim)),
+                # jnp.zeros((1, config.rnn_num_layers, config.rnn_hidden_dim)),
+                network.initialize_carry(batch_size=config.num_envs_per_device),
                 1,
             )
 
@@ -384,7 +385,8 @@ def make_train(
                 eval_train_puzzles,
                 train_state,
                 # TODO: make this as a static method mb?
-                jnp.zeros((1, config.rnn_num_layers, config.rnn_hidden_dim)),
+                # jnp.zeros((1, config.rnn_num_layers, config.rnn_hidden_dim)),
+                network.initialize_carry(batch_size=config.num_envs_per_device),
                 1,
             )
 
@@ -421,19 +423,19 @@ def train(config: TrainConfig):
     rng, env, env_params, benchmark, init_hstate, network, network_params = make_states(config)
 
     lr_search = jnp.array(config.lr_hparams)
-    train_fn = make_train(env, env_params, benchmark, config)
-    train_fn_vmap = jax.vmap(train_fn, in_axes=(0, None, None, None, None))
+    train_fn = make_train(env, env_params, benchmark, config, network, network_params)
+    train_fn_vmap = jax.jit(jax.vmap(train_fn, in_axes=(0, None, None)))
 
     print("Compiling...")
     t = time.time()
     # Might need to jax.jit the below?
-    train_fn_jit_vmap = train_fn_vmap.lower(lr_search, rng, network, network_params, init_hstate).compile()
+    train_fn_jit_vmap = train_fn_vmap.lower(lr_search, rng, init_hstate).compile()
     elapsed_time = time.time() - t
     print(f"Done in {elapsed_time:.2f}s.")
 
     print("Training...")
     t = time.time()
-    train_info = jax.block_until_ready(train_fn_jit_vmap(lr_search, rng, network, network_params, init_hstate))
+    train_info = jax.block_until_ready(train_fn_jit_vmap(lr_search, rng, init_hstate))
     elapsed_time = time.time() - t
     print(f"Done in {elapsed_time:.2f}s.")
 
@@ -444,46 +446,61 @@ def processing(config: TrainConfig, train_info, elapsed_time):
     print("Logging...")
     loss_info = train_info["loss_info"]
 
-    if config.track or config.upload_model:
-        run = wandb.init(
-            project=config.project,
-            group=config.group,
-            name=config.name,
-            config=asdict(config),
-            save_code=True,
-        )
-
     if config.track:
-        total_transitions = 0
-        for i in range(config.num_updates):
-            # summing total transitions per update from all devices
-            total_transitions += config.num_steps * config.num_envs_per_device * jax.local_device_count()
-            info = jtu.tree_map(lambda x: x[i].item(), loss_info)
-            info["transitions"] = total_transitions
-            wandb.log(info)
-
-        run.summary["training_time"] = elapsed_time
-        run.summary["steps_per_second"] = (config.total_timesteps_per_device * jax.local_device_count()) / elapsed_time
-
-    if config.checkpoint_path is not None:
-        checkpoint = {"config": asdict(config), "params": train_info["runner_state"].params}
-        orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
-        save_args = orbax_utils.save_args_from_target(checkpoint)
-        orbax_checkpointer.save(config.checkpoint_path, checkpoint, save_args=save_args)
-
-        if config.upload_model:
-            # Upload to W&B as artifact
-            artifact = wandb.Artifact(
-                name=f"model-checkpoint-{run.id}", type="model", description="Trained model checkpoint"
+        for j, lr in enumerate(config.lr_hparams):
+            lr_run = wandb.init(
+                project=config.project,
+                group=config.group,
+                name=f"{config.name}|lr={lr}",
+                config={**asdict(config), "lr_selected": float(lr)},
+                save_code=True,
+                reinit=True,
             )
-            artifact.add_dir(config.checkpoint_path)  # Add entire checkpoint directory
-            run.log_artifact(artifact)
 
-    if config.track or config.upload_model:
-        run.finish()
+            wandb.define_metric("transitions")
+            wandb.define_metric("*", step_metric="transitions")
 
-    print("Final test set return: ", float(loss_info["eval_test/returns_mean"][-1]))
-    print("Final test set solved percentage: ", float(loss_info["eval_test/solved_percentage"][-1]))
+            total_transitions = 0
+            for i in range(config.num_updates):
+                total_transitions += config.num_steps * config.num_envs_per_device * jax.local_device_count()
+                info_ji = jtu.tree_map(lambda x: x[j, i].item(), loss_info)
+                info_ji["transitions"] = total_transitions
+                wandb.log(info_ji)
+
+            lr_run.summary["training_time"] = elapsed_time
+            lr_run.summary["steps_per_second"] = (
+                config.total_timesteps_per_device * jax.local_device_count()
+            ) / elapsed_time
+            lr_run.summary["final/returns_mean"] = float(loss_info["eval_test/returns_mean"][j, -1])
+            lr_run.summary["final/solved_pct"] = float(loss_info["eval_test/solved_percentage"][j, -1])
+            lr_run.finish()
+
+    # if config.checkpoint_path is not None:
+    #     checkpoint = {"config": asdict(config), "params": train_info["runner_state"].params}
+    #     orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
+    #     save_args = orbax_utils.save_args_from_target(checkpoint)
+    #     orbax_checkpointer.save(config.checkpoint_path, checkpoint, save_args=save_args)
+
+    #     if config.upload_model:
+    #         # Upload to W&B as artifact
+    #         artifact = wandb.Artifact(
+    #             name=f"model-checkpoint-{run.id}", type="model", description="Trained model checkpoint"
+    #         )
+    #         artifact.add_dir(config.checkpoint_path)  # Add entire checkpoint directory
+    #         run.log_artifact(artifact)
+
+    # if config.track or config.upload_model:
+    #     run.finish()
+
+    for i in range(len(config.lr_hparams)):
+        print(
+            f"Final test set return for lr {config.lr_hparams[i]}: ",
+            float(loss_info["eval_test/returns_mean"][i].mean(0)),
+        )
+        print(
+            f"Final test set solved percentage for lr {config.lr_hparams[i]}: ",
+            float(loss_info["eval_test/solved_percentage"][i].mean(0)),
+        )
 
 
 @pyrallis.wrap()
