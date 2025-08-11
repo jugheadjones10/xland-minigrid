@@ -428,7 +428,6 @@ def train(config: TrainConfig):
 
     print("Compiling...")
     t = time.time()
-    # Might need to jax.jit the below?
     train_fn_jit_vmap = train_fn_vmap.lower(lr_search, rng, init_hstate).compile()
     elapsed_time = time.time() - t
     print(f"Done in {elapsed_time:.2f}s.")
