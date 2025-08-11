@@ -204,6 +204,7 @@ def make_train(
         eval_hstate = init_hstate[0][None]
 
         # META TRAIN LOOP
+        @partial(jax.jit, static_argnums=(1,))
         def _meta_step(meta_state, num_steps_per_update):
             rng, train_state = meta_state
 
@@ -423,12 +424,12 @@ def train(config: TrainConfig):
     train_state = replicate(train_state, jax.local_devices())
     init_hstate = replicate(init_hstate, jax.local_devices())
 
-    print("Compiling...")
-    t = time.time()
+    # print("Compiling...")
+    # t = time.time()
     train_fn = make_train(env, env_params, benchmark, config)
-    train_fn = train_fn.lower(rng, train_state, init_hstate).compile()
-    elapsed_time = time.time() - t
-    print(f"Done in {elapsed_time:.2f}s.")
+    # train_fn = train_fn.lower(rng, train_state, init_hstate).compile()
+    # elapsed_time = time.time() - t
+    # print(f"Done in {elapsed_time:.2f}s.")
 
     print("Training...")
     t = time.time()
