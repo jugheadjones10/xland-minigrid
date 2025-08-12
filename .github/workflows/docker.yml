@@ -19,10 +19,17 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # - name: Check out repository
-      #   uses: actions/checkout@v4
-      #   with:
-      #     fetch-depth: 0 # full history (optional; set 1 if you only need HEAD)
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history (optional; set 1 if you only need HEAD)
+
+      - name: Verify build context
+        run: |
+          pwd
+          ls -la
+          test -d .git && echo ".git present" || (echo "no .git" && exit 1)
+          cat .dockerignore || echo "no .dockerignore"
 
       - name: Build and push
         uses: docker/build-push-action@v6
