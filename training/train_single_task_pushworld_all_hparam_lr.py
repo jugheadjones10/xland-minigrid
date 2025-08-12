@@ -456,9 +456,6 @@ def processing(config: TrainConfig, train_info, elapsed_time):
                 reinit=True,
             )
 
-            wandb.define_metric("transitions")
-            wandb.define_metric("*", step_metric="transitions")
-
             total_transitions = 0
             for i in range(config.num_updates):
                 total_transitions += config.num_steps * config.num_envs_per_device * jax.local_device_count()
