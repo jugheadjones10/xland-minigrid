@@ -24,7 +24,6 @@ from utils_pushworld_all import (
     Transition,
     calculate_gae,
     meta_rollout,
-    ppo_update_networks,
     rollout,
 )
 
@@ -36,6 +35,63 @@ from xminigrid.envs.pushworld.wrappers import GymAutoResetWrapper
 
 # this will be default in new jax versions anyway
 jax.config.update("jax_threefry_partitionable", True)
+
+
+def ppo_update_networks(
+    train_state: TrainState,
+    transitions: Transition,
+    init_hstate: jax.Array,
+    advantages: jax.Array,
+    targets: jax.Array,
+    clip_eps: float,
+    vf_coef: float,
+    ent_coef: float,
+):
+    # NORMALIZE ADVANTAGES
+    advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+
+    def _loss_fn(params):
+        # RERUN NETWORK
+        dist, value, _ = train_state.apply_fn(
+            params,
+            {
+                # [batch_size, seq_len, ...]
+                "obs": transitions.obs,
+                "prev_action": transitions.prev_action,
+                "prev_reward": transitions.prev_reward,
+            },
+            init_hstate,
+        )
+        log_prob = dist.log_prob(transitions.action)
+
+        # CALCULATE VALUE LOSS
+        value_pred_clipped = transitions.value + (value - transitions.value).clip(-clip_eps, clip_eps)
+        value_loss = jnp.square(value - targets)
+        value_loss_clipped = jnp.square(value_pred_clipped - targets)
+        value_loss = 0.5 * jnp.maximum(value_loss, value_loss_clipped).mean()
+
+        # TODO: ablate this!
+        # value_loss = jnp.square(value - targets).mean()
+
+        # CALCULATE ACTOR LOSS
+        ratio = jnp.exp(log_prob - transitions.log_prob)
+        actor_loss1 = advantages * ratio
+        actor_loss2 = advantages * jnp.clip(ratio, 1.0 - clip_eps, 1.0 + clip_eps)
+        actor_loss = -jnp.minimum(actor_loss1, actor_loss2).mean()
+        entropy = dist.entropy().mean()
+
+        total_loss = actor_loss + vf_coef * value_loss - ent_coef * entropy
+        return total_loss, (value_loss, actor_loss, entropy)
+
+    (loss, (vloss, aloss, entropy)), grads = jax.value_and_grad(_loss_fn, has_aux=True)(train_state.params)
+    train_state = train_state.apply_gradients(grads=grads)
+    update_info = {
+        "total_loss": loss,
+        "value_loss": vloss,
+        "actor_loss": aloss,
+        "entropy": entropy,
+    }
+    return train_state, update_info
 
 
 @dataclass
@@ -195,7 +251,6 @@ def make_train(
     benchmark: BenchmarkAll,
     config: TrainConfig,
 ):
-    @partial(jax.pmap, axis_name="devices")
     def train(
         rng: jax.Array,
         train_state: TrainState,
@@ -352,7 +407,7 @@ def make_train(
                 eval_hstate,
                 config.eval_num_episodes,
             )
-            eval_test_stats = jax.lax.pmean(eval_test_stats, axis_name="devices")
+            # eval_test_stats = jax.lax.pmean(eval_test_stats, axis_name="devices")
 
             # Eval on train set
             eval_train_reset_rng = jax.random.split(eval_train_rng, num=config.num_train)
@@ -366,7 +421,7 @@ def make_train(
                 eval_hstate,
                 config.eval_num_episodes,
             )
-            eval_train_stats = jax.lax.pmean(eval_train_stats, axis_name="devices")
+            # eval_train_stats = jax.lax.pmean(eval_train_stats, axis_name="devices")
 
             # averaging over inner updates, adding evaluation metrics
             loss_info = jtu.tree_map(lambda x: x.mean(-1), loss_info)
