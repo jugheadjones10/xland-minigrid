@@ -474,10 +474,6 @@ def train(config: TrainConfig):
         shutil.rmtree(config.checkpoint_path)
 
     rng, env, env_params, benchmark, init_hstate, train_state = make_states(config)
-    # replicating args across devices
-    rng = jax.random.split(rng, num=jax.local_device_count())
-    train_state = replicate(train_state, jax.local_devices())
-    init_hstate = replicate(init_hstate, jax.local_devices())
 
     # print("Compiling...")
     # t = time.time()
