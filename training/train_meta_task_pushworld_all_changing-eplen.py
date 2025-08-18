@@ -15,7 +15,6 @@ import optax
 import orbax
 import pyrallis
 import wandb
-from flax.jax_utils import replicate, unreplicate
 from flax.training import orbax_utils
 from flax.training.train_state import TrainState
 from nn_pushworld_all import ActorCriticRNN
@@ -488,7 +487,7 @@ def train(config: TrainConfig):
     elapsed_time = time.time() - t
     print(f"Done in {elapsed_time:.2f}s.")
 
-    return unreplicate(train_info), elapsed_time
+    return jax.device_get(train_info), elapsed_time
 
 
 def processing(config: TrainConfig, train_info, elapsed_time):
