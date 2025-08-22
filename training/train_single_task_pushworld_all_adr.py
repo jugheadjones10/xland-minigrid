@@ -208,13 +208,10 @@ def make_train(
         eval_env = SingleTaskPushWorldEnvironmentAll()
 
         # TRAIN LOOP
-        # @partial(jax.jit, static_argnums=(1,))
-        # TODO: don't understand why it's ok to not make adr_params static
-        # TODO: but actually now I realised because of the new way we calculate subset,
-        # maybe we can try compiling the whole loop again?
         @jax.jit
-        def _update_step(runner_state, adr_params, update_idx):
+        def _update_step(runner_state, update_idx):
             # jax.debug.print("Update step: {}", update_idx)
+            adr_params = runner_state[-2]
 
             timestep = jax.vmap(env.reset, in_axes=(None, 0, None))(puzzle_env_params, reset_rng, adr_params)
             prev_action = jnp.zeros(config.num_envs_per_device, dtype=jnp.int32)
@@ -222,7 +219,7 @@ def make_train(
 
             # COLLECT TRAJECTORIES
             def _env_step(runner_state, _):
-                rng, train_state, prev_timestep, prev_action, prev_reward, prev_hstate = runner_state
+                rng, train_state, prev_timestep, prev_action, prev_reward, adr_params, prev_hstate = runner_state
 
                 # SELECT ACTION
                 rng, _rng = jax.random.split(rng)
@@ -254,7 +251,7 @@ def make_train(
                     prev_action=prev_action,
                     prev_reward=prev_reward,
                 )
-                runner_state = (rng, train_state, timestep, action, timestep.reward, hstate)
+                runner_state = (rng, train_state, timestep, action, timestep.reward, adr_params, hstate)
                 return runner_state, transition
 
             initial_hstate = runner_state[-1]
@@ -262,7 +259,7 @@ def make_train(
             runner_state, transitions = jax.lax.scan(_env_step, runner_state, None, config.num_steps)
 
             # CALCULATE ADVANTAGE
-            rng, train_state, timestep, prev_action, prev_reward, hstate = runner_state
+            rng, train_state, timestep, prev_action, prev_reward, adr_params, hstate = runner_state
             # calculate value of the last step for bootstrapping
             _, last_val, _ = train_state.apply_fn(
                 train_state.params,
@@ -394,19 +391,13 @@ def make_train(
                     "lr": train_state.opt_state[-1].hyperparams["learning_rate"],
                 }
             )
-            runner_state = (rng, train_state, timestep, prev_action, prev_reward, hstate)
-            return runner_state, loss_info, adr_params
+            runner_state = (rng, train_state, timestep, prev_action, prev_reward, adr_params, hstate)
+            return runner_state, loss_info
 
-        runner_state = (rng, train_state, timestep, prev_action, prev_reward, init_hstate)
-        all_loss_info = []
-        for i in range(config.num_updates):
-            runner_state, loss_info, adr_params = _update_step(runner_state, adr_params, i)
-            all_loss_info.append(loss_info)
-
-        keys = all_loss_info[0].keys()
-        transposed_loss_info = {k: jnp.stack([d[k] for d in all_loss_info]) for k in keys}
-
-        return {"runner_state": runner_state[1], "loss_info": transposed_loss_info}
+        runner_state = (rng, train_state, timestep, prev_action, prev_reward, adr_params, init_hstate)
+        update_indices = jnp.arange(config.num_updates)
+        runner_state, loss_info = jax.lax.scan(_update_step, runner_state, update_indices, config.num_updates)
+        return {"runner_state": runner_state[1], "loss_info": loss_info}
 
     return train
 

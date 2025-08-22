@@ -32,6 +32,14 @@ class PushWorldPuzzleAll(struct.PyTreeNode):
     w: jax.Array
 
 
+class PushWorldPuzzleADR(struct.PyTreeNode):
+    puzzle_size: jax.Array
+    num_walls: jax.Array
+    num_movables: jax.Array
+    shape: jax.Array
+    num_goals: jax.Array
+
+
 class EnvCarry(struct.PyTreeNode): ...
 
 
@@ -102,3 +110,11 @@ class TimeStep(Generic[EnvCarryT], struct.PyTreeNode):
 
 class TimeStepAll(TimeStep[EnvCarryT]):
     state: StateAll[EnvCarryT]
+
+
+class ADRParams(struct.PyTreeNode):
+    puzzle_size: tuple[int, int]
+    num_walls: tuple[int, int]
+    num_movables: tuple[int, int]
+    shape: tuple[int, int]
+    num_goals: tuple[int, int]

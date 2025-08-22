@@ -4,6 +4,7 @@ from typing import Any
 
 import jax
 
+from .benchmarks_adr import ADRParams
 from .constants import LEVEL0_SIZE
 from .environment import Environment, EnvParamsT
 from .types import EnvCarryT, IntOrArray, State, TimeStep
@@ -59,6 +60,32 @@ class GymAutoResetWrapper(Wrapper):
         timestep = jax.lax.cond(
             timestep.last(),
             lambda: self.__auto_reset(params, timestep),
+            lambda: timestep,
+        )
+        return timestep
+
+
+# gym and gymnasium style reset (on the same step with termination)
+class GymAutoResetWrapperADR(Wrapper):
+    def __auto_reset(self, params, timestep, adr_params):
+        key, _ = jax.random.split(timestep.state.key)
+        reset_timestep = self._env.reset(params, key, adr_params)
+
+        timestep = timestep.replace(
+            state=reset_timestep.state,
+            observation=reset_timestep.observation,
+        )
+        return timestep
+
+    def reset(self, params: EnvParamsT, key: jax.Array, adr_params: ADRParams) -> TimeStep[EnvCarryT]:
+        return self._env.reset(params, key, adr_params)
+
+    # TODO: add last_obs somewhere in the timestep? add extras like in Jumanji?
+    def step(self, params, timestep, action, adr_params):
+        timestep = self._env.step(params, timestep, action)
+        timestep = jax.lax.cond(
+            timestep.last(),
+            lambda: self.__auto_reset(params, timestep, adr_params),
             lambda: timestep,
         )
         return timestep
