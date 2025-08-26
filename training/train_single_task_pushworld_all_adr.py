@@ -210,12 +210,14 @@ def make_train(
         # TRAIN LOOP
         @jax.jit
         def _update_step(runner_state, update_idx):
-            # jax.debug.print("Update step: {}", update_idx)
-            adr_params = runner_state[-2]
-
+            (rng, train_state, timestep, prev_action, prev_reward, adr_params, hstate) = runner_state
+            rng, _reset_rng = jax.random.split(rng)
+            reset_rng = jax.random.split(_reset_rng, config.num_envs_per_device)
             timestep = jax.vmap(env.reset, in_axes=(None, 0, None))(puzzle_env_params, reset_rng, adr_params)
+
             prev_action = jnp.zeros(config.num_envs_per_device, dtype=jnp.int32)
             prev_reward = jnp.zeros(config.num_envs_per_device)
+            runner_state = (rng, train_state, timestep, prev_action, prev_reward, adr_params, hstate)
 
             # COLLECT TRAJECTORIES
             def _env_step(runner_state, _):
