@@ -26,6 +26,41 @@ class BenchmarkAllADR(BenchmarkAll):
         jax.jit,
         static_argnums=(3,),
     )
+    def sample_puzzle_with_index(
+        self,
+        key: jax.Array,
+        adr_params: ADRParams,
+        type: Literal["train", "test"] = "train",
+    ) -> tuple[PushWorldPuzzleAll, jax.Array]:
+        # In sample_puzzle, we randomly pick a puzzle using the key from puzzles that satisfy the ADR params
+        # Filter for the indexes that match the adr_params, then return the puzzles
+
+        if type == "train":
+            adr = self.train_puzzles_adr
+        else:
+            adr = self.test_puzzles_adr
+
+        valid_mask = (
+            (adr[:, 0] >= adr_params.puzzle_size[0])
+            & (adr[:, 0] <= adr_params.puzzle_size[1])
+            & (adr[:, 1] >= adr_params.num_walls[0])
+            & (adr[:, 1] <= adr_params.num_walls[1])
+            & (adr[:, 2] >= adr_params.num_movables[0])
+            & (adr[:, 2] <= adr_params.num_movables[1])
+            & (adr[:, 3] >= adr_params.shape[0])
+            & (adr[:, 3] <= adr_params.shape[1])
+            & (adr[:, 4] >= adr_params.num_goals[0])
+            & (adr[:, 4] <= adr_params.num_goals[1])
+        )
+
+        puzzle_index = jax.random.choice(key, adr.shape[0], shape=(), p=valid_mask)
+        puzzle = self.get_puzzle(puzzle_index, type)
+        return puzzle, puzzle_index
+
+    @partial(
+        jax.jit,
+        static_argnums=(3,),
+    )
     def sample_puzzle(
         self,
         key: jax.Array,

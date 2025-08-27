@@ -69,7 +69,7 @@ class GymAutoResetWrapper(Wrapper):
 class GymAutoResetWrapperADR(Wrapper):
     def __auto_reset(self, params, timestep, adr_params):
         key, _ = jax.random.split(timestep.state.key)
-        reset_timestep = self._env.reset(params, key, adr_params)
+        reset_timestep, puzzle_index = self._env.reset(params, key, adr_params)
 
         timestep = timestep.replace(
             state=reset_timestep.state,
@@ -77,7 +77,7 @@ class GymAutoResetWrapperADR(Wrapper):
         )
         return timestep
 
-    def reset(self, params: EnvParamsT, key: jax.Array, adr_params: ADRParams) -> TimeStep[EnvCarryT]:
+    def reset(self, params: EnvParamsT, key: jax.Array, adr_params: ADRParams) -> tuple[TimeStep[EnvCarryT], jax.Array]:
         return self._env.reset(params, key, adr_params)
 
     # TODO: add last_obs somewhere in the timestep? add extras like in Jumanji?

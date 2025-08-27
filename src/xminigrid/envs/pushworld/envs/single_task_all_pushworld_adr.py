@@ -46,8 +46,8 @@ class SingleTaskPushWorldEnvironmentAllADR(
 
     def reset(
         self, params: SingleTaskPushWorldEnvParamsAll, key: jax.Array, adr_params: ADRParams
-    ) -> TimeStepAll[EnvCarry]:
-        puzzle = params.benchmark.sample_puzzle(key, adr_params, "train")
+    ) -> tuple[TimeStepAll[EnvCarry], jax.Array]:
+        puzzle, puzzle_index = params.benchmark.sample_puzzle_with_index(key, adr_params, "train")
         params = params.replace(puzzle=puzzle)
         state = self._generate_problem(params, key)
         # Generate observation
@@ -59,7 +59,7 @@ class SingleTaskPushWorldEnvironmentAllADR(
             discount=jnp.asarray(1.0),
             observation=observation,
         )
-        return timestep
+        return timestep, puzzle_index
 
     def eval_reset(self, params: SingleTaskPushWorldEnvParamsAll, key: jax.Array) -> TimeStepAll[EnvCarry]:
         state = self._generate_problem(params, key)
