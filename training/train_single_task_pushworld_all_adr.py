@@ -195,13 +195,13 @@ def make_train(
         puzzle_env_params = env_params.replace(benchmark=benchmark)
         # Initial adr_params
         adr_params = ADRParams(
-            puzzle_size=(5, 5),
+            puzzle_size=(6, 6),
             num_walls=(3, 3),
             num_movables=(1, 1),
-            shape=(1, 1),
+            shape=(2, 2),
             num_goals=(1, 1),
         )
-        timestep = jax.vmap(env.reset, in_axes=(None, 0, None))(puzzle_env_params, reset_rng, adr_params)
+        timestep, puzzle_index = jax.vmap(env.reset, in_axes=(None, 0, None))(puzzle_env_params, reset_rng, adr_params)
         prev_action = jnp.zeros(config.num_envs_per_device, dtype=jnp.int32)
         prev_reward = jnp.zeros(config.num_envs_per_device)
 
@@ -213,7 +213,9 @@ def make_train(
             (rng, train_state, timestep, prev_action, prev_reward, adr_params, hstate) = runner_state
             rng, _reset_rng = jax.random.split(rng)
             reset_rng = jax.random.split(_reset_rng, config.num_envs_per_device)
-            timestep = jax.vmap(env.reset, in_axes=(None, 0, None))(puzzle_env_params, reset_rng, adr_params)
+            timestep, puzzle_index = jax.vmap(env.reset, in_axes=(None, 0, None))(
+                puzzle_env_params, reset_rng, adr_params
+            )
 
             prev_action = jnp.zeros(config.num_envs_per_device, dtype=jnp.int32)
             prev_reward = jnp.zeros(config.num_envs_per_device)
@@ -345,6 +347,7 @@ def make_train(
                 low, high = v
                 adr_params = adr_params.replace(**{k: (high, high)})
                 adr_puzzles_subset_mask = benchmark.get_puzzles_subset_mask(adr_params, "train")
+                subset_size = adr_puzzles_subset_mask.sum()
                 num = jnp.where(adr_puzzles_subset_mask, eval_train_stats.solved.astype(jnp.float32), 0.0).sum()
                 den = jnp.maximum(adr_puzzles_subset_mask.sum(), 1)
                 subset_solved_percentage = num / den
@@ -356,9 +359,27 @@ def make_train(
                 lo_out = jnp.minimum(low, hi_out)
                 adr_params = adr_params.replace(**{k: (lo_out, hi_out)})
 
+                # Log per-field subset stats and decision
+                loss_info_key_prefix = f"adr/{k}"
+                loss_info.update(
+                    {
+                        f"{loss_info_key_prefix}/subset/size": subset_size,
+                        f"{loss_info_key_prefix}/subset/solved": subset_solved_percentage,
+                        f"{loss_info_key_prefix}/improve": improve.astype(jnp.float32),
+                        f"{loss_info_key_prefix}/old_high": high,
+                        f"{loss_info_key_prefix}/new_high": hi_out,
+                    }
+                )
+
                 # if subset_solved_percentage > 0.7:
                 # TODO set max of the different params
                 # adr_params = adr_params.replace(**{k: (low, min(high + 1, MAX_BY_FIELD[k]))})
+
+            # Overall subset stats for final combined ADR params
+            final_mask = benchmark.get_puzzles_subset_mask(adr_params, "train")
+            final_subset_size = final_mask.sum()
+            final_subset_solved = jnp.where(final_mask, eval_train_stats.solved.astype(jnp.float32), 0.0).sum()
+            final_subset_solved_pct = final_subset_solved / jnp.maximum(final_subset_size, 1)
 
             eval_test_reset_rng = jax.random.split(eval_test_rng, num=config.num_test)
             eval_test_puzzles = benchmark.get_test_puzzles()
@@ -379,11 +400,8 @@ def make_train(
                 {
                     # To see how the upper bounds of the ADR params are evolving over time
                     # TODO might need to add logging of more ADR metrics
-                    "adr/puzzle_size": adr_params.puzzle_size[1],
-                    "adr/num_walls": adr_params.num_walls[1],
-                    "adr/num_movables": adr_params.num_movables[1],
-                    "adr/shape": adr_params.shape[1],
-                    "adr/num_goals": adr_params.num_goals[1],
+                    "adr/subset/size": final_subset_size,
+                    "adr/subset/solved": final_subset_solved_pct,
                     "eval_test/returns_mean": eval_test_stats.reward.mean(0),
                     "eval_test/lengths": eval_test_stats.length.mean(0),
                     "eval_test/solved_percentage": eval_test_stats.solved.sum(0) / config.num_test,
