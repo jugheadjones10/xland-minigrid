@@ -17,7 +17,6 @@ import optax
 import orbax
 import pyrallis
 import wandb
-from flax import struct
 from flax.jax_utils import replicate, unreplicate
 from flax.training import orbax_utils
 from flax.training.train_state import TrainState
@@ -25,20 +24,13 @@ from nn_pushworld_all import ActorCriticRNN
 from utils_pushworld_all import Transition, calculate_gae, ppo_update_networks, rollout
 
 import xminigrid.envs.pushworld as pushworld
-from xminigrid.envs.pushworld.benchmarks_adr import BenchmarkAllADR
-from xminigrid.envs.pushworld.environment import Environment, EnvParams
+from xminigrid.envs.pushworld.benchmarks import BenchmarkAll
+from xminigrid.envs.pushworld.environment import Environment, EnvParams, EnvParamsT
 from xminigrid.envs.pushworld.envs.single_task_all_pushworld import SingleTaskPushWorldEnvironmentAll
-from xminigrid.envs.pushworld.envs.single_task_all_pushworld_adr import SingleTaskPushWorldEnvironmentAllADR
-from xminigrid.envs.pushworld.types import ADRParams
-from xminigrid.envs.pushworld.wrappers import GymAutoResetWrapperADR
+from xminigrid.envs.pushworld.wrappers import GymAutoResetWrapper
 
-MAX_BY_FIELD = {
-    "puzzle_size": 10,
-    "num_walls": 5,
-    "num_movables": 2,
-    "shape": 3,
-    "num_goals": 2,
-}
+# this will be default in new jax versions anyway
+# jax.config.update("jax_threefry_partitionable", True)
 
 
 @dataclass
@@ -53,13 +45,12 @@ class TrainConfig:
     # Upload to W&B
     upload_model: bool = False
 
+    reset_at_update: bool = False
+
     # If True, test puzzles are duplicated from train puzzles
     train_test_same: bool = False
     num_train: Optional[int] = None
     num_test: Optional[int] = None
-
-    # ADR
-    adr_perf_threshold: float = 0.7
 
     img_obs: bool = False
     # agent
@@ -106,11 +97,11 @@ def make_states(config: TrainConfig):
         return config.lr * frac
 
     # setup environment
-    env = SingleTaskPushWorldEnvironmentAllADR()
+    env = SingleTaskPushWorldEnvironmentAll()
     env_params = env.default_params()
-    env = GymAutoResetWrapperADR(env)
+    env = GymAutoResetWrapper(env)
 
-    benchmark = pushworld.load_all_benchmark_adr(config.benchmark_id)
+    benchmark = pushworld.load_all_benchmark(config.benchmark_id)
 
     puzzle_rng = jax.random.key(config.puzzle_seed)
     train_rng, test_rng = jax.random.split(puzzle_rng)
@@ -182,7 +173,7 @@ def make_states(config: TrainConfig):
 def make_train(
     env: Environment,
     env_params: EnvParams,
-    benchmark: BenchmarkAllADR,
+    benchmark: BenchmarkAll,
     config: TrainConfig,
 ):
     @partial(jax.pmap, axis_name="devices")
@@ -196,37 +187,26 @@ def make_train(
         reset_rng = jax.random.split(_rng, config.num_envs_per_device)
 
         puzzle_env_params = env_params.replace(benchmark=benchmark)
-        # Initial adr_params
-        adr_params = ADRParams(
-            puzzle_size=(6, 6),
-            num_walls=(3, 3),
-            num_movables=(1, 1),
-            shape=(2, 2),
-            num_goals=(1, 1),
-        )
-        timestep, puzzle_index = jax.vmap(env.reset, in_axes=(None, 0, None))(puzzle_env_params, reset_rng, adr_params)
+
+        timestep = jax.vmap(env.reset, in_axes=(None, 0))(puzzle_env_params, reset_rng)
         prev_action = jnp.zeros(config.num_envs_per_device, dtype=jnp.int32)
         prev_reward = jnp.zeros(config.num_envs_per_device)
 
-        eval_env = SingleTaskPushWorldEnvironmentAll()
-
         # TRAIN LOOP
-        @jax.jit
         def _update_step(runner_state, update_idx):
-            (rng, train_state, timestep, prev_action, prev_reward, adr_params, hstate) = runner_state
-            rng, _rng = jax.random.split(rng)
-            reset_rng = jax.random.split(_rng, config.num_envs_per_device)
-            timestep, puzzle_index = jax.vmap(env.reset, in_axes=(None, 0, None))(
-                puzzle_env_params, reset_rng, adr_params
-            )
+            if config.reset_at_update:
+                (rng, train_state, timestep, prev_action, prev_reward, hstate) = runner_state
+                rng, _rng = jax.random.split(rng)
+                reset_rng = jax.random.split(_rng, config.num_envs_per_device)
+                timestep = jax.vmap(env.reset, in_axes=(None, 0))(puzzle_env_params, reset_rng)
 
-            prev_action = jnp.zeros(config.num_envs_per_device, dtype=jnp.int32)
-            prev_reward = jnp.zeros(config.num_envs_per_device)
-            runner_state = (rng, train_state, timestep, prev_action, prev_reward, adr_params, hstate)
+                prev_action = jnp.zeros(config.num_envs_per_device, dtype=jnp.int32)
+                prev_reward = jnp.zeros(config.num_envs_per_device)
+                runner_state = (rng, train_state, timestep, prev_action, prev_reward, hstate)
 
             # COLLECT TRAJECTORIES
             def _env_step(runner_state, _):
-                rng, train_state, prev_timestep, prev_action, prev_reward, adr_params, prev_hstate = runner_state
+                rng, train_state, prev_timestep, prev_action, prev_reward, prev_hstate = runner_state
 
                 # SELECT ACTION
                 rng, _rng = jax.random.split(rng)
@@ -245,9 +225,7 @@ def make_train(
                 action, value, log_prob = action.squeeze(1), value.squeeze(1), log_prob.squeeze(1)
 
                 # STEP ENV
-                timestep = jax.vmap(env.step, in_axes=(None, 0, 0, None))(
-                    puzzle_env_params, prev_timestep, action, adr_params
-                )
+                timestep = jax.vmap(env.step, in_axes=(None, 0, 0))(puzzle_env_params, prev_timestep, action)
                 transition = Transition(
                     done=timestep.last(),
                     action=action,
@@ -258,7 +236,7 @@ def make_train(
                     prev_action=prev_action,
                     prev_reward=prev_reward,
                 )
-                runner_state = (rng, train_state, timestep, action, timestep.reward, adr_params, hstate)
+                runner_state = (rng, train_state, timestep, action, timestep.reward, hstate)
                 return runner_state, transition
 
             initial_hstate = runner_state[-1]
@@ -266,7 +244,7 @@ def make_train(
             runner_state, transitions = jax.lax.scan(_env_step, runner_state, None, config.num_steps)
 
             # CALCULATE ADVANTAGE
-            rng, train_state, timestep, prev_action, prev_reward, adr_params, hstate = runner_state
+            rng, train_state, timestep, prev_action, prev_reward, hstate = runner_state
             # calculate value of the last step for bootstrapping
             _, last_val, _ = train_state.apply_fn(
                 train_state.params,
@@ -326,70 +304,17 @@ def make_train(
             rng, train_state = update_state[:2]
 
             # EVALUATE AGENT
-            eval_seed_rng = jax.random.key(config.eval_seed)
-            eval_test_rng, eval_train_rng = jax.random.split(eval_seed_rng)
+            eval_reset_rng = jax.random.key(config.eval_seed)
+            eval_test_rng, eval_train_rng = jax.random.split(eval_reset_rng)
             assert config.num_test is not None, "num_test must be set for evaluation"
             assert config.num_train is not None, "num_train must be set for evaluation"
-
-            # Eval on train set
-            eval_train_reset_rng = jax.random.split(eval_train_rng, num=config.num_train)
-            eval_train_puzzles = benchmark.get_train_puzzles()
-            eval_train_stats = jax.vmap(rollout, in_axes=(0, None, None, 0, None, None, None))(
-                eval_train_reset_rng,
-                eval_env,
-                puzzle_env_params,
-                eval_train_puzzles,
-                train_state,
-                # TODO: make this as a static method mb?
-                jnp.zeros((1, config.rnn_num_layers, config.rnn_hidden_dim)),
-                1,
-            )
-            eval_train_stats = jax.lax.pmean(eval_train_stats, axis_name="devices")
-
-            # Overall subset stats for ADR params
-            final_mask = benchmark.get_puzzles_subset_mask(adr_params, "train")
-            final_subset_size = final_mask.sum()
-            final_subset_solved = jnp.where(final_mask, eval_train_stats.solved.astype(jnp.float32), 0.0).sum()
-            final_subset_solved_pct = final_subset_solved / jnp.maximum(final_subset_size, 1)
-
-            for k, v in asdict(adr_params).items():
-                low, high = v
-                adr_params = adr_params.replace(**{k: (high, high)})
-                adr_puzzles_subset_mask = benchmark.get_puzzles_subset_mask(adr_params, "train")
-                subset_size = adr_puzzles_subset_mask.sum()
-                num = jnp.where(adr_puzzles_subset_mask, eval_train_stats.solved.astype(jnp.float32), 0.0).sum()
-                den = jnp.maximum(adr_puzzles_subset_mask.sum(), 1)
-                subset_solved_percentage = num / den
-
-                improve = subset_solved_percentage > config.adr_perf_threshold  # bool[] tracer
-                cap = MAX_BY_FIELD[k]  # Python int
-                new_high = jnp.minimum(high + 1, cap)
-                hi_out = jax.lax.select(improve, new_high, high)  # if improve then new_high else high
-                lo_out = jnp.minimum(low, hi_out)
-                adr_params = adr_params.replace(**{k: (lo_out, hi_out)})
-
-                # Log per-field subset stats and decision
-                # loss_info_key_prefix = f"adr/{k}"
-                # loss_info.update(
-                #     {
-                #         f"{loss_info_key_prefix}/subset/size": subset_size,
-                #         f"{loss_info_key_prefix}/subset/solved": subset_solved_percentage,
-                #         f"{loss_info_key_prefix}/improve": improve.astype(jnp.float32),
-                #         f"{loss_info_key_prefix}/old_high": high,
-                #         f"{loss_info_key_prefix}/new_high": hi_out,
-                #     }
-                # )
-
-                # if subset_solved_percentage > 0.7:
-                # TODO set max of the different params
-                # adr_params = adr_params.replace(**{k: (low, min(high + 1, MAX_BY_FIELD[k]))})
 
             eval_test_reset_rng = jax.random.split(eval_test_rng, num=config.num_test)
             eval_test_puzzles = benchmark.get_test_puzzles()
             # vmap only on rngs
             eval_test_stats = jax.vmap(rollout, in_axes=(0, None, None, 0, None, None, None))(
                 eval_test_reset_rng,
-                eval_env,
+                env,
                 puzzle_env_params,
                 eval_test_puzzles,
                 train_state,
@@ -399,17 +324,23 @@ def make_train(
             )
             eval_test_stats = jax.lax.pmean(eval_test_stats, axis_name="devices")
 
+            # Eval on train set
+            eval_train_reset_rng = jax.random.split(eval_train_rng, num=config.num_train)
+            eval_train_puzzles = benchmark.get_train_puzzles()
+            eval_train_stats = jax.vmap(rollout, in_axes=(0, None, None, 0, None, None, None))(
+                eval_train_reset_rng,
+                env,
+                puzzle_env_params,
+                eval_train_puzzles,
+                train_state,
+                # TODO: make this as a static method mb?
+                jnp.zeros((1, config.rnn_num_layers, config.rnn_hidden_dim)),
+                1,
+            )
+            eval_train_stats = jax.lax.pmean(eval_train_stats, axis_name="devices")
+
             loss_info.update(
                 {
-                    # To see how the upper bounds of the ADR params are evolving over time
-                    # TODO might need to add logging of more ADR metrics
-                    "adr/subset/size": final_subset_size,
-                    "adr/subset/solved_percentage": final_subset_solved_pct,
-                    "adr/puzzle_size": adr_params.puzzle_size[1],
-                    "adr/num_walls": adr_params.num_walls[1],
-                    "adr/num_movables": adr_params.num_movables[1],
-                    "adr/shape": adr_params.shape[1],
-                    "adr/num_goals": adr_params.num_goals[1],
                     "eval_test/returns_mean": eval_test_stats.reward.mean(0),
                     "eval_test/lengths": eval_test_stats.length.mean(0),
                     "eval_test/solved_percentage": eval_test_stats.solved.sum(0) / config.num_test,
@@ -419,10 +350,11 @@ def make_train(
                     "lr": train_state.opt_state[-1].hyperparams["learning_rate"],
                 }
             )
-            runner_state = (rng, train_state, timestep, prev_action, prev_reward, adr_params, hstate)
+            runner_state = (rng, train_state, timestep, prev_action, prev_reward, hstate)
             return runner_state, loss_info
 
-        runner_state = (rng, train_state, timestep, prev_action, prev_reward, adr_params, init_hstate)
+        runner_state = (rng, train_state, timestep, prev_action, prev_reward, init_hstate)
+        # Create a sequence of numbers from 0 to num_updates-1 for progress tracking
         update_indices = jnp.arange(config.num_updates)
         runner_state, loss_info = jax.lax.scan(_update_step, runner_state, update_indices, config.num_updates)
         return {"runner_state": runner_state[1], "loss_info": loss_info}
@@ -436,17 +368,6 @@ def train(config: TrainConfig):
         shutil.rmtree(config.checkpoint_path)
 
     rng, env, env_params, benchmark, init_hstate, train_state = make_states(config)
-
-    # Use this if we have for loop inside the train function
-    # rng = jax.random.split(rng, num=jax.local_device_count())
-    # train_state = replicate(train_state, jax.local_devices())
-    # init_hstate = replicate(init_hstate, jax.local_devices())
-    # train_fn = make_train(env, env_params, benchmark, config)
-    # print("Training...")
-    # t = time.time()
-    # train_info = jax.block_until_ready(train_fn(rng, train_state, init_hstate))
-    # elapsed_time = time.time() - t
-    # print(f"Done in {elapsed_time:.2f}s.")
 
     # replicating args across devices
     rng = jax.random.split(rng, num=jax.local_device_count())
